@@ -1,0 +1,4 @@
+{
+  "description": "mize-coworker: Claude animated beside the prompt footer, and a spinner word that says what is happening",
+  "modules": ["./register.tsx"]
+}

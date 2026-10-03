@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.DS_Store
+# the engine lays the API declarations here after a load with --plugin-dir
+plugins/*/.claude-plugin/types/

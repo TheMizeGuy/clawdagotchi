@@ -1,0 +1,456 @@
+{
+  "comment": "Every picture frame of Claude (0.5.0 adds blinkHalf, write, webSearch, skill and plug): its name, its kind (solo: 70x40 logical pixels, a box of 8 cells by 2 rows; scene: 105x40, 12 cells by 2 rows, drawn only beside the spinner), the solo frame the footer shows in a scene's place, and the braille pose that stands in where the terminal has no graphics. scripts/make-frames.py draws one PNG per entry; hooks/lib/sprite.ts mirrors this table and a test holds the two together.",
+  "scale": 4,
+  "solo": {
+    "width": 70,
+    "height": 40,
+    "columns": 8,
+    "rows": 2
+  },
+  "scene": {
+    "width": 105,
+    "height": 40,
+    "columns": 12,
+    "rows": 2
+  },
+  "frames": [
+    {
+      "name": "idle",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "standing, eyes open, relaxed"
+    },
+    {
+      "name": "idleUp",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "the top of a breath: one pixel taller, arms a pixel higher"
+    },
+    {
+      "name": "blink",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "eyes shut for a blink"
+    },
+    {
+      "name": "lookL",
+      "kind": "solo",
+      "braille": "lookL",
+      "what": "eyes to the left"
+    },
+    {
+      "name": "lookR",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "eyes to the right"
+    },
+    {
+      "name": "lookUp",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "eyes up, pondering"
+    },
+    {
+      "name": "lookDown",
+      "kind": "solo",
+      "braille": "focus",
+      "what": "eyes down, concentrating"
+    },
+    {
+      "name": "armsIn",
+      "kind": "solo",
+      "braille": "armsIn",
+      "what": "arms tucked forward, as if typing"
+    },
+    {
+      "name": "stepA",
+      "kind": "solo",
+      "braille": "stepA",
+      "what": "walk, first step"
+    },
+    {
+      "name": "stepB",
+      "kind": "solo",
+      "braille": "stepB",
+      "what": "walk, second step, one pixel up"
+    },
+    {
+      "name": "hop1",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "crouch before a hop: squashed, wider, legs bent"
+    },
+    {
+      "name": "hop2",
+      "kind": "solo",
+      "braille": "hop",
+      "what": "in the air: stretched, arms up, legs dangling, small ground shadow"
+    },
+    {
+      "name": "hop3",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "landing squash"
+    },
+    {
+      "name": "wave1",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "right arm raised high, happy eyes"
+    },
+    {
+      "name": "wave2",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "the raised arm tilted the other way, happy eyes"
+    },
+    {
+      "name": "flinch",
+      "kind": "solo",
+      "braille": "flinch",
+      "what": "eyes squeezed shut, recoiled, a sweat drop"
+    },
+    {
+      "name": "cheer1",
+      "kind": "solo",
+      "braille": "hop",
+      "what": "both arms up, happy eyes, sparkles starting"
+    },
+    {
+      "name": "cheer2",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "off the ground, confetti at its widest"
+    },
+    {
+      "name": "cheer3",
+      "kind": "solo",
+      "braille": "hop",
+      "what": "landing, confetti falling"
+    },
+    {
+      "name": "yawn1",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "eyes squeezed, a small round mouth opening, arms stretching out"
+    },
+    {
+      "name": "yawn2",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "the yawn at its widest, arms fully stretched"
+    },
+    {
+      "name": "sip1",
+      "kind": "solo",
+      "braille": "armsIn",
+      "what": "holding a small mug, steam rising"
+    },
+    {
+      "name": "sip2",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "the mug at the face, eyes closed, content"
+    },
+    {
+      "name": "sweat1",
+      "kind": "solo",
+      "braille": "lookL",
+      "what": "worried eyes glancing left (toward the context gauge), a sweat drop at the temple"
+    },
+    {
+      "name": "sweat2",
+      "kind": "solo",
+      "braille": "lookL",
+      "what": "the same, the drop lower"
+    },
+    {
+      "name": "clock1",
+      "kind": "solo",
+      "braille": "focus",
+      "what": "holding a small hourglass, looking at it"
+    },
+    {
+      "name": "clock2",
+      "kind": "solo",
+      "braille": "focus",
+      "what": "the hourglass with more sand fallen, eyes a little wider"
+    },
+    {
+      "name": "pumpkin1",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "a small jack-o'-lantern beside him, glowing"
+    },
+    {
+      "name": "pumpkin2",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "the lantern's glow flickered dimmer, Claude smiling at it with happy eyes"
+    },
+    {
+      "name": "sleep1",
+      "kind": "solo",
+      "braille": "sleep",
+      "what": "asleep: settled low, eyes closed, a small z"
+    },
+    {
+      "name": "sleep2",
+      "kind": "solo",
+      "braille": "sleep",
+      "what": "breathing in: one pixel higher, z and a bigger Z drifting up"
+    },
+    {
+      "name": "sleep3",
+      "kind": "solo",
+      "braille": "sleep",
+      "what": "breathing out, the Zs higher and fading"
+    },
+    {
+      "name": "sleepCold1",
+      "kind": "solo",
+      "braille": "sleep",
+      "what": "asleep with frost on his top edge and a small snowflake (the prompt cache went cold)"
+    },
+    {
+      "name": "sleepCold2",
+      "kind": "solo",
+      "braille": "sleep",
+      "what": "the same, breathing, the snowflake turned"
+    },
+    {
+      "name": "think1",
+      "kind": "scene",
+      "solo": "lookUp",
+      "what": "eyes up and right; a thought bubble at the upper right holding one dot"
+    },
+    {
+      "name": "think2",
+      "kind": "scene",
+      "solo": "lookUp",
+      "what": "the bubble holding two dots"
+    },
+    {
+      "name": "think3",
+      "kind": "scene",
+      "solo": "idle",
+      "what": "the bubble holding three dots"
+    },
+    {
+      "name": "read1",
+      "kind": "scene",
+      "solo": "lookDown",
+      "what": "an open book held to the right, eyes on its left page"
+    },
+    {
+      "name": "read2",
+      "kind": "scene",
+      "solo": "lookDown",
+      "what": "eyes on the right page"
+    },
+    {
+      "name": "read3",
+      "kind": "scene",
+      "solo": "blink",
+      "what": "a page in mid-turn"
+    },
+    {
+      "name": "search1",
+      "kind": "scene",
+      "solo": "lookL",
+      "what": "a magnifying glass over the first of a few faint text lines"
+    },
+    {
+      "name": "search2",
+      "kind": "scene",
+      "solo": "idle",
+      "what": "the glass over the middle line, one word under it lit"
+    },
+    {
+      "name": "search3",
+      "kind": "scene",
+      "solo": "lookR",
+      "what": "the glass over the last line"
+    },
+    {
+      "name": "type1",
+      "kind": "scene",
+      "solo": "armsIn",
+      "what": "at a small laptop, left arm down on the keys, a line of code on its screen"
+    },
+    {
+      "name": "type2",
+      "kind": "scene",
+      "solo": "idle",
+      "what": "right arm down, the line longer"
+    },
+    {
+      "name": "type3",
+      "kind": "scene",
+      "solo": "armsIn",
+      "what": "left arm down, a second line started"
+    },
+    {
+      "name": "run1",
+      "kind": "scene",
+      "solo": "stepA",
+      "what": "a small terminal window: a prompt and a caret"
+    },
+    {
+      "name": "run2",
+      "kind": "scene",
+      "solo": "stepB",
+      "what": "output lines appearing, the caret off"
+    },
+    {
+      "name": "run3",
+      "kind": "scene",
+      "solo": "stepA",
+      "what": "more output, the caret on"
+    },
+    {
+      "name": "web1",
+      "kind": "scene",
+      "solo": "lookR",
+      "what": "a small globe, its land at the left"
+    },
+    {
+      "name": "web2",
+      "kind": "scene",
+      "solo": "lookR",
+      "what": "the globe turned a third"
+    },
+    {
+      "name": "web3",
+      "kind": "scene",
+      "solo": "idle",
+      "what": "the globe turned two thirds"
+    },
+    {
+      "name": "team1a",
+      "kind": "scene",
+      "solo": "hop2",
+      "what": "one small Claude helper at the right, mid-bob; the big one gesturing toward it"
+    },
+    {
+      "name": "team1b",
+      "kind": "scene",
+      "solo": "idle",
+      "what": "the helper down"
+    },
+    {
+      "name": "team2a",
+      "kind": "scene",
+      "solo": "hop2",
+      "what": "two helpers, the first up"
+    },
+    {
+      "name": "team2b",
+      "kind": "scene",
+      "solo": "idle",
+      "what": "two helpers, the second up"
+    },
+    {
+      "name": "team3a",
+      "kind": "scene",
+      "solo": "hop2",
+      "what": "three helpers, the outer two up"
+    },
+    {
+      "name": "team3b",
+      "kind": "scene",
+      "solo": "idle",
+      "what": "three helpers, the middle one up"
+    },
+    {
+      "name": "ask1",
+      "kind": "scene",
+      "solo": "wave1",
+      "what": "a yellow speech bubble with an exclamation mark, Claude waving at the viewer"
+    },
+    {
+      "name": "ask2",
+      "kind": "scene",
+      "solo": "wave2",
+      "what": "the bubble a pixel higher, the arm tilted the other way"
+    },
+    {
+      "name": "work1",
+      "kind": "scene",
+      "solo": "idle",
+      "what": "a small gear at the right, Claude's arm on it"
+    },
+    {
+      "name": "work2",
+      "kind": "scene",
+      "solo": "blink",
+      "what": "the gear turned an eighth"
+    },
+    {
+      "name": "blinkHalf",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "eyes half closed (4 px tall), the frame between open and shut"
+    },
+    {
+      "name": "write1",
+      "kind": "scene",
+      "solo": "lookDown",
+      "what": "a pale notepad page at the right with faint rules; a mauve pen held in his right arm at the start of the first line, one short ink stroke written"
+    },
+    {
+      "name": "write2",
+      "kind": "scene",
+      "solo": "lookDown",
+      "what": "the first line longer, the pen further right"
+    },
+    {
+      "name": "write3",
+      "kind": "scene",
+      "solo": "blink",
+      "what": "two lines written, the pen at the end of the second, a small ink dot"
+    },
+    {
+      "name": "webSearch1",
+      "kind": "scene",
+      "solo": "lookR",
+      "what": "the globe as in web1 with the magnifying glass over its upper left"
+    },
+    {
+      "name": "webSearch2",
+      "kind": "scene",
+      "solo": "lookR",
+      "what": "the globe turned a third, the glass over its middle, the land under it brighter"
+    },
+    {
+      "name": "webSearch3",
+      "kind": "scene",
+      "solo": "idle",
+      "what": "the globe turned two thirds, the glass over its lower right"
+    },
+    {
+      "name": "skill1",
+      "kind": "scene",
+      "solo": "lookDown",
+      "what": "a parchment scroll half unrolled at the right (pale yellow paper, lavender rods), two faint lines showing"
+    },
+    {
+      "name": "skill2",
+      "kind": "scene",
+      "solo": "idle",
+      "what": "the scroll fully unrolled, four faint lines and a small green check at the bottom"
+    },
+    {
+      "name": "plug1",
+      "kind": "scene",
+      "solo": "armsIn",
+      "what": "a cable from his right arm ending in a plug a few pixels short of a wall socket at the right (surface-colored plate, two dark slots)"
+    },
+    {
+      "name": "plug2",
+      "kind": "scene",
+      "solo": "idle",
+      "what": "the plug in the socket, a small yellow spark at the join"
+    }
+  ]
+}
