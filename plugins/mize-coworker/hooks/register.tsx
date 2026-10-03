@@ -9,8 +9,14 @@
  *   the session and its agents are doing. Idle he breathes, blinks and lives
  *   on the reserved cells of the row (strolls, looks, hops, yawns, sips a
  *   coffee; sweats near a full context, eyes an hourglass when a usage window
- *   runs hot, sits by a pumpkin in late October); after 10 idle minutes he
- *   sleeps, frosted once the prompt cache has gone cold.
+ *   runs hot, sits by a pumpkin in late October, glances at a small terminal
+ *   while a shell runs in the background); after 10 idle minutes he sleeps,
+ *   frosted once the prompt cache has gone cold. While the main loop rests
+ *   and agents or workflows work in the background he minds them
+ *   (`supervising`): at ease as when idle, with a skit every 4 to 10 s (a
+ *   rocket as they start, a tally of them, a radar, a headset, a helper with
+ *   a finished agent's report, juggling, a paper plane, a plant that grows
+ *   with the wait, ...) and never the same one twice running.
  * - Spinner (the main loop's only): the word becomes what is happening
  *   (`Reading register.ts`, `Running npm`); the engine keeps its glyph,
  *   shimmer, time, tokens and effort. While the main loop's turn runs, Claude
@@ -20,17 +26,18 @@
  *   laptop, a terminal, a globe, small helpers, a speech bubble, a gear, a
  *   scroll, a plug), and the footer keeps only the engine's labels.
  * - AbovePrompt (the band above the prompt): `/coworker demo`'s tour, every
- *   animation once with its spinner word or move name, about a minute.
+ *   animation once with its spinner word or move name, about two minutes.
  * - `/coworker` prints the switches and what Claude is doing; `/coworker off`
  *   and `/coworker on`, typed at the prompt, switch both for the session, and
  *   `/coworker demo` starts or stops the tour.
  *
  * Sources: turn.start / turn.complete (the main loop's; a subagent's run
- * raises no turn.start and its turn.complete carries agentId), and the
- * classic tool events (PreToolUse, PostToolUse, PostToolUseFailure,
- * PermissionDenied, PermissionRequest), which fire for the main loop and its
- * agents alike. No `tool.call` hook (docs/BUILD-SPEC.md rule 7a); no tool call
- * is ever changed.
+ * raises no turn.start and its turn.complete carries agentId), the classic
+ * tool events (PreToolUse, PostToolUse, PostToolUseFailure, PermissionDenied,
+ * PermissionRequest), which fire for the main loop and its agents alike (an
+ * agent's carry its `agent_id`), and the stop hooks' `background_tasks`
+ * (which agents, workflows and shells still run). No `tool.call` hook
+ * (docs/BUILD-SPEC.md rule 7a); no tool call is ever changed.
  *
  * It only draws: no processes, no store, no model calls, no network, nothing
  * the model reads, and two files: the cells Claude needs on the status row,
@@ -54,10 +61,13 @@ import type { EngineInterface, Register, RenderElement, Timer } from 'claude-cod
 import type { CoworkerActivity, CoworkerDemo, CoworkerDoing, CoworkerSpot } from '../types'
 import { DEMO_ACTS, demoSteps, type DemoStep } from './lib/demo'
 import {
+  agentCount,
   agentEnded,
+  backgroundOf,
   backgroundSeen,
   doingKey,
   greeted,
+  hasAgentSigns,
   idleSince,
   isCheering,
   narration,
@@ -84,9 +94,13 @@ import {
   boxOf,
   brailleOf,
   BREATH_MS,
+  captionOf,
   CLAUDE_COLOR,
+  footerOf,
   footerPieces,
+  footerRange,
   frameFile,
+  isAtEase,
   isBusy,
   isClaude,
   isFrameName,
@@ -100,20 +114,34 @@ import {
   sizeOf,
   SLEEP_FRAME_MS,
   SPINNER_FRESH_MS,
-  soloOf,
   spinnerFrame,
   TICK_MS,
   viewKey,
   viewOf,
   viewOfFrame,
-  wanderRoom,
   type FrameContext,
   type FrameName,
   type Piece,
   type Size,
 } from './lib/sprite'
 import { parseVitals, reserveDefaultPath, reserveLine, reservePath, vitalsPath, type Vitals } from './lib/statusline-bus'
-import { chooseMove, DROWSY_MS, gatedMoves, nextWait, seeded, WANDER_RANGE, type Rng, type Step } from './lib/wander'
+import {
+  chooseMove,
+  chooseSkit,
+  clampX,
+  DROWSY_MS,
+  gatedMoves,
+  moveSteps,
+  nextWait,
+  seeded,
+  SKIT_SOON_MS,
+  WANDER_RANGE,
+  type GatedMove,
+  type Move,
+  type MoveKind,
+  type Rng,
+  type Step,
+} from './lib/wander'
 
 const COMMAND = 'coworker'
 /**
@@ -133,6 +161,20 @@ const SPINNER_ROW = 1
 const STEP_WRAP = 480
 /** The vitals file is read at most this often; between reads the last answer stands. */
 const VITALS_EVERY_MS = 10_000
+/** The send-off (the rocket) plays only when the agents take over within this long of the main turn's end. */
+const LAUNCH_WINDOW_MS = 10_000
+/** A finished agent's report is brought only this fresh. */
+const REPORT_FRESH_MS = 10_000
+/** At least this long between two reports, so a wave of agents finishing together is one helper, not a queue of them. */
+const REPORT_EVERY_MS = 20_000
+/** While a turn is open, the spinner's silence is checked once in this many ticks (about a second). */
+const REST_CHECK_TICKS = 4
+/**
+ * A wake whose time only moved this much later keeps its timer (every sign of
+ * an agent moves the end of the quiet a little): the wake it brings works out
+ * what is left and waits again.
+ */
+const WAKE_SLACK_MS = 60_000
 
 const DOING_REF = { plugin: 'mize-coworker', key: 'doing' } as const
 const VIEW_REF = { plugin: 'mize-coworker', key: 'view' } as const
@@ -213,6 +255,20 @@ const S = {
   stepAt: 0,
   /** The frame the move shows over the idle frame. */
   moveFrame: undefined as FrameName | undefined,
+  /** The move last begun: a skit never plays twice running. */
+  lastMove: undefined as MoveKind | undefined,
+  /** How many agents he minds, as last worked out: the supervising caption and the tally's digit. */
+  agents: 1,
+  /** The main loop rests, as last worked out: no turn, or a turn left open whose spinner has gone quiet. */
+  isResting: true,
+  /** The stretch of agent work (the model's agentsSince) whose send-off was decided, so it is decided once. */
+  launchedFor: undefined as number | undefined,
+  /** The send-off is the next skit. */
+  isLaunchDue: false,
+  /** When a report was last brought (REPORT_EVERY_MS apart at least). */
+  reportedAt: Number.NEGATIVE_INFINITY,
+  /** The wait under way is the short one, for a skit that answers something: if nothing is left to answer when it ends, the usual wait follows, not a move. */
+  isWaitShort: false,
   /** How far the wander may go on the row the footer was last drawn on (narrower in a narrow terminal). */
   wanderRange: WANDER_RANGE.big.full as number,
   /** The plugin's directory, which holds assets/frames/; read once at session start. */
@@ -268,6 +324,7 @@ function stop(timer: Timer | null): null {
 /** Ends the wander: no next move, no move under way. Claude stays where it took him. */
 function stopWander(): void {
   S.wanderer = stop(S.wanderer)
+  S.isWaitShort = false
   S.walker = stop(S.walker)
   S.steps = undefined
   S.stepAt = 0
@@ -310,9 +367,24 @@ function sizeNow(): Size {
   return sizeOf(S.options.picture, S.options.big)
 }
 
-/** True while an idle Claude may wander: drawn, animated, with gestures, and idle (not asleep, no turn). */
+/** True while Claude may wander: drawn, animated, with gestures, and at ease (idle or minding agents; not asleep, not busy). */
 function canWander(): boolean {
-  return isDrawing() && S.options.animate && S.gestures && S.activity === 'idle'
+  return isDrawing() && S.options.animate && S.gestures && isAtEase(S.activity)
+}
+
+/**
+ * True while the main loop rests: no turn of its runs, or one is open but its
+ * spinner has not drawn Claude for SPINNER_FRESH_MS (between a /goal's
+ * iterations, or while it waits on background work with the turn left open).
+ * The spinner's silence counts only while his frames animate: with `animate`
+ * off nothing redraws the spinner site between events, so its age says nothing.
+ */
+function isMainResting(now: number): boolean {
+  if (!S.model.isTurnRunning) {
+    return true
+  }
+
+  return isBesideOn() && S.options.animate && now - S.spinnerAt > SPINNER_FRESH_MS
 }
 
 /** Where Claude is drawn now: beside the spinner while the main loop's turn runs, else the footer. */
@@ -510,7 +582,8 @@ async function draw($: EngineInterface): Promise<void> {
     return
   }
 
-  const view = S.moveFrame !== undefined && S.activity === 'idle' ? movingView(S.moveFrame) : viewOf(S.activity, S.step, frameContext())
+  const context = frameContext()
+  const view = S.moveFrame !== undefined && isAtEase(S.activity) ? movingView(S.moveFrame, captionOf(S.activity, context)) : viewOf(S.activity, S.step, context)
   const key = viewKey(view)
 
   if (key !== S.viewKey) {
@@ -527,7 +600,7 @@ async function draw($: EngineInterface): Promise<void> {
   await place($)
 }
 
-/** What picks the frame besides the activity and the step: motion, the blink and breath, the team, the cheer, the cold. */
+/** What picks the frame besides the activity and the step: motion, the blink and breath, the team, the cheer, the cold, the agents he minds. */
 function frameContext(): FrameContext {
   const blinking = S.blinkAt === 0 ? undefined : BLINK[S.blinkAt - 1]?.frame
 
@@ -539,6 +612,7 @@ function frameContext(): FrameContext {
     team: teamSize(S.model),
     isCheer: isCheering(S.model),
     isCold: S.isCold,
+    agents: S.agents,
   }
 }
 
@@ -571,6 +645,19 @@ async function tick($: EngineInterface): Promise<void> {
     }
 
     S.step = (S.step + 1) % STEP_WRAP
+
+    // a turn left open whose spinner has gone quiet: the main loop rests, and agents at work get his
+    // attention (asked about once a second, and only when something says an agent may be at work)
+    if (S.model.isTurnRunning && !S.isResting && S.step % REST_CHECK_TICKS === 0 && hasAgentSigns(S.model)) {
+      const now = await nowOf($)
+
+      if (now !== undefined && isMainResting(now)) {
+        await refresh($, now)
+
+        return
+      }
+    }
+
     await draw($)
   } catch (error) {
     debug($, `tick failed: ${messageOf(error)}`)
@@ -584,14 +671,14 @@ function scheduleBlink($: EngineInterface, ms: number): void {
 }
 
 /**
- * The idle blink, one phase at a time while idle: open for BLINK_EVERY_MS,
+ * The blink, one phase at a time while at ease: open for BLINK_EVERY_MS,
  * then half shut, shut and half shut again, each for its BLINK phase's ms.
  */
 async function blink($: EngineInterface): Promise<void> {
   try {
     S.blinker = null
 
-    if (!isDrawing() || !S.options.animate || S.activity !== 'idle') {
+    if (!isDrawing() || !S.options.animate || !isAtEase(S.activity)) {
       S.blinkAt = 0
 
       return
@@ -605,13 +692,39 @@ async function blink($: EngineInterface): Promise<void> {
   }
 }
 
-/** The idle breath: idle and idleUp in turn, every BREATH_MS, while idle. */
+/**
+ * True, with everything brought in line, when the main loop was taken to be
+ * resting with its turn left open and its spinner is drawing Claude again: it
+ * is at work, and he is its own once more. Asked from the at-ease timers (the
+ * breath, a move's steps); the spinner's render hook only notes the time.
+ */
+async function isMainBack($: EngineInterface): Promise<boolean> {
+  if (!S.model.isTurnRunning || !S.isResting) {
+    return false
+  }
+
+  const now = await nowOf($)
+
+  if (now === undefined || isMainResting(now)) {
+    return false
+  }
+
+  await refresh($, now)
+
+  return true
+}
+
+/** The breath: idle and idleUp in turn, every BREATH_MS, while at ease. */
 async function breathe($: EngineInterface): Promise<void> {
   try {
-    if (!isDrawing() || !S.options.animate || S.activity !== 'idle') {
+    if (!isDrawing() || !S.options.animate || !isAtEase(S.activity)) {
       S.breather = stop(S.breather)
       S.isBreathIn = false
 
+      return
+    }
+
+    if (await isMainBack($)) {
       return
     }
 
@@ -639,13 +752,72 @@ async function snore($: EngineInterface): Promise<void> {
   }
 }
 
+/**
+ * Waits for the next move: 12 to 30 s idle, 4 to 10 s while he minds agents,
+ * and only a moment when a skit answers something (the send-off as the
+ * agents start, a finished agent's report).
+ */
 function scheduleWander($: EngineInterface): void {
-  S.wanderer = $.clock.after(nextWait(S.rng), () => {
+  // one wait at a time: a wait scheduled while another was pending (a refresh during a move's awaits) replaces it
+  S.wanderer = stop(S.wanderer)
+  S.isWaitShort = (S.activity === 'supervising' && S.isLaunchDue) || S.model.report !== undefined
+  S.wanderer = $.clock.after(S.isWaitShort ? SKIT_SOON_MS : nextWait(S.rng, S.activity === 'supervising'), () => {
     void wander($)
   })
 }
 
-/** The wait is over: an idle Claude starts his next move, its first step now and one per tick after. */
+/** True when a skit that answers something is due at `now`: the send-off, or a report still fresh and far enough from the last. */
+function isAnswerDue(now: number): boolean {
+  if (S.activity === 'supervising' && S.isLaunchDue) {
+    return true
+  }
+
+  const report = S.model.report
+
+  return report !== undefined && now - report <= REPORT_FRESH_MS && now - S.reportedAt >= REPORT_EVERY_MS
+}
+
+/**
+ * The next move of a Claude at ease. Minding agents: the send-off when it is
+ * due, else a finished agent's report when one is fresh, else a skit from the
+ * mix. Idle: a fresh report (the last agent just finished), else the idle mix.
+ */
+function nextMove(now: number, hour: number, gated: GatedMove[]): Move {
+  const isSupervising = S.activity === 'supervising'
+  const at = clampX(S.x, S.wanderRange)
+
+  if (isSupervising && S.isLaunchDue) {
+    S.isLaunchDue = false
+
+    return { kind: 'launch', steps: moveSteps('launch', at) }
+  }
+
+  const report = S.model.report
+
+  S.model.report = undefined
+
+  if (report !== undefined && now - report <= REPORT_FRESH_MS && now - S.reportedAt >= REPORT_EVERY_MS) {
+    S.reportedAt = now
+
+    return { kind: 'report', steps: moveSteps('report', at) }
+  }
+
+  if (isSupervising) {
+    return chooseSkit(S.rng, S.x, S.wanderRange, {
+      count: S.agents,
+      forMs: now - (S.model.agentsSince ?? now),
+      isWorkflow: S.model.background.hasWorkflow,
+      hour,
+      isSeasonal: S.options.seasonal,
+      gated,
+      last: S.lastMove,
+    })
+  }
+
+  return chooseMove(S.rng, S.x, S.wanderRange, { gated, isDrowsy: now - idleSince(S.model) >= DROWSY_MS })
+}
+
+/** The wait is over: a Claude at ease starts his next move, its first step now and one per tick after. */
 async function wander($: EngineInterface): Promise<void> {
   try {
     S.wanderer = null
@@ -662,10 +834,29 @@ async function wander($: EngineInterface): Promise<void> {
       return
     }
 
-    const date = new Date(now)
-    const gated = gatedMoves(vitals, date.getMonth(), date.getDate(), S.options.seasonal)
-    const move = chooseMove(S.rng, S.x, S.wanderRange, { gated, isDrowsy: now - idleSince(S.model) >= DROWSY_MS })
+    // the short wait was for an answer that is no longer due (a report gone stale behind a move): the
+    // usual wait follows, so two moves never run back to back
+    if (S.isWaitShort && !isAnswerDue(now)) {
+      S.model.report = undefined
+      scheduleWander($)
 
+      return
+    }
+
+    S.isWaitShort = false
+    // where he stands is where the row draws him (a caption may have taken cells since he last walked)
+    S.x = clampX(S.x, S.wanderRange)
+
+    // the count the paddle shows is the caption's, worked out now (it otherwise follows events only)
+    if (S.activity === 'supervising') {
+      S.agents = agentCount(S.model, now)
+    }
+
+    const date = new Date(now)
+    const gated = gatedMoves(vitals, date.getMonth(), date.getDate(), S.options.seasonal, S.model.background.shells)
+    const move = nextMove(now, date.getHours(), gated)
+
+    S.lastMove = move.kind
     S.steps = move.steps
     S.stepAt = 0
     S.walker = $.clock.every(TICK_MS, () => {
@@ -683,6 +874,15 @@ async function walk($: EngineInterface): Promise<void> {
     if (!canWander() || S.steps === undefined) {
       stopWander()
 
+      return
+    }
+
+    if (await isMainBack($)) {
+      return
+    }
+
+    // the await took a moment: a refresh may have ended the move
+    if (!canWander() || S.steps === undefined) {
       return
     }
 
@@ -705,7 +905,37 @@ async function walk($: EngineInterface): Promise<void> {
   }
 }
 
-/** Runs the tick while busy; the blink, the breath and the wander while idle; the sleep loop asleep. */
+/**
+ * A background agent finished: when Claude is at ease and between moves, the
+ * report it left is brought now, not at the end of the wait. One that comes
+ * too soon after the last is dropped (a wave of agents finishing together is
+ * one helper); one that finds him in the middle of a move waits for its end.
+ */
+async function bringReport($: EngineInterface, now: number): Promise<void> {
+  try {
+    if (S.model.report === undefined) {
+      return
+    }
+
+    if (now - S.reportedAt < REPORT_EVERY_MS) {
+      S.model.report = undefined
+
+      return
+    }
+
+    if (!canWander() || S.walker !== null) {
+      return
+    }
+
+    S.wanderer = stop(S.wanderer)
+    S.isWaitShort = false
+    await wander($)
+  } catch (error) {
+    debug($, `report not brought: ${messageOf(error)}`)
+  }
+}
+
+/** Runs the tick while busy; the blink, the breath and the wander while at ease; the sleep loop asleep. */
 function syncAnimation($: EngineInterface): void {
   const isAnimated = isDrawing() && S.options.animate
 
@@ -719,7 +949,7 @@ function syncAnimation($: EngineInterface): void {
     S.ticker = stop(S.ticker)
   }
 
-  if (isAnimated && S.activity === 'idle') {
+  if (isAnimated && isAtEase(S.activity)) {
     if (S.blinker === null) {
       S.blinkAt = 0
       scheduleBlink($, BLINK_EVERY_MS)
@@ -759,13 +989,18 @@ function syncAnimation($: EngineInterface): void {
 
 /**
  * One `after` for the next change no event brings: decay, sleep, a forgotten
- * call. Left alone when an event did not move its time (tool calls in a turn).
+ * call, the agents going quiet. Left alone when an event did not move its
+ * time (tool calls in a turn) or moved it only a little later (WAKE_SLACK_MS).
  */
 function scheduleWake($: EngineInterface, now: number): void {
   const ms = nextChangeIn(S.model, now)
   const at = ms === undefined ? undefined : now + ms
 
   if (S.waker !== null && at === S.wakeAt) {
+    return
+  }
+
+  if (S.waker !== null && at !== undefined && S.wakeAt !== undefined && at > S.wakeAt && at - S.wakeAt < WAKE_SLACK_MS) {
     return
   }
 
@@ -809,7 +1044,9 @@ async function refresh($: EngineInterface, now: number): Promise<void> {
       return
     }
 
-    const doing = shown(S.model, now)
+    S.isResting = isMainResting(now)
+
+    const doing = shown(S.model, now, S.isResting)
     const busy = isBusy(doing.activity)
 
     if (busy !== S.wasBusy) {
@@ -817,11 +1054,33 @@ async function refresh($: EngineInterface, now: number): Promise<void> {
       S.busySince = now
     }
 
+    S.agents = doing.activity === 'supervising' ? agentCount(S.model, now) : 1
+
+    // a report nobody was at ease to be brought has gone stale
+    if (S.model.report !== undefined && now - S.model.report > REPORT_FRESH_MS) {
+      S.model.report = undefined
+    }
+
     if (doing.activity !== S.activity) {
+      // the wait for a move is the activity's own: idle's long one must not hold up the first skit
+      if (isAtEase(S.activity) || isAtEase(doing.activity)) {
+        S.wanderer = stop(S.wanderer)
+      }
+
       S.activity = doing.activity
       S.step = 0
       S.blinkAt = 0
       S.isBreathIn = false
+
+      // the agents take over as the main turn ends: a send-off, decided once per stretch of agent work
+      const since = S.model.agentsSince
+
+      S.isLaunchDue =
+        S.activity === 'supervising' && since !== undefined && since !== S.launchedFor && S.model.turnEndedAt > 0 && now - S.model.turnEndedAt <= LAUNCH_WINDOW_MS
+
+      if (S.activity === 'supervising') {
+        S.launchedFor = since
+      }
 
       // falling asleep: frosted from the first frame when the prompt cache has gone cold
       if (S.activity === 'asleep' && isDrawing()) {
@@ -878,6 +1137,13 @@ async function start($: EngineInterface): Promise<void> {
     S.wasBusy = false
     S.busySince = now
     S.rng = seeded(now)
+    S.lastMove = undefined
+    S.agents = 1
+    S.isResting = true
+    S.launchedFor = undefined
+    S.isLaunchDue = false
+    S.reportedAt = Number.NEGATIVE_INFINITY
+    S.isWaitShort = false
     await readSessionId($)
     await adopt($)
     await reserve($)
@@ -1088,8 +1354,12 @@ async function ended($: EngineInterface, id: string, tool: string, input: unknow
   }
 }
 
-/** Records the session's background work as a stop hook reports it; an event without the list changes nothing. */
-async function background($: EngineInterface, tasks: unknown): Promise<void> {
+/**
+ * Records the session's background work as a stop hook reports it (`isMain`:
+ * the main loop's stop, the word on which agents still run); an event without
+ * the list changes nothing.
+ */
+async function background($: EngineInterface, tasks: unknown, isMain: boolean): Promise<void> {
   if (!isLive() || !Array.isArray(tasks)) {
     return
   }
@@ -1098,7 +1368,7 @@ async function background($: EngineInterface, tasks: unknown): Promise<void> {
     const now = await nowOf($)
 
     if (now !== undefined) {
-      backgroundSeen(S.model, tasks.length, now)
+      backgroundSeen(S.model, backgroundOf(tasks), now, isMain)
       await refresh($, now)
     }
   } catch (error) {
@@ -1134,12 +1404,21 @@ async function setOff($: EngineInterface, isOff: boolean): Promise<void> {
 
 async function statusOf($: EngineInterface): Promise<string> {
   const now = (await nowOf($)) ?? 0
-  const doing: CoworkerDoing = S.isInteractive ? shown(S.model, now) : { activity: 'idle', word: '' }
-  const forMs = isBusy(doing.activity) ? now - S.busySince : now - idleSince(S.model)
+  const doing: CoworkerDoing = S.isInteractive ? shown(S.model, now, isMainResting(now)) : { activity: 'idle', word: '' }
+  const isMinding = doing.activity === 'supervising'
+  const forMs = isMinding ? now - (S.model.agentsSince ?? now) : isBusy(doing.activity) ? now - S.busySince : now - idleSince(S.model)
   const step = S.demo?.steps[S.demo.at]
   const demo = step === undefined ? undefined : { act: step.act + 1, of: DEMO_ACTS, label: step.label }
 
-  return statusText({ isInteractive: S.isInteractive, isOff: S.isOff, options: S.options, doing, forMs, demo })
+  return statusText({
+    isInteractive: S.isInteractive,
+    isOff: S.isOff,
+    options: S.options,
+    doing,
+    forMs,
+    demo,
+    agents: isMinding ? agentCount(S.model, now) : undefined,
+  })
 }
 
 /**
@@ -1202,6 +1481,13 @@ export const register: Register = (on, options) => {
   S.steps = undefined
   S.stepAt = 0
   S.moveFrame = undefined
+  S.lastMove = undefined
+  S.agents = 1
+  S.isResting = true
+  S.launchedFor = undefined
+  S.isLaunchDue = false
+  S.reportedAt = Number.NEGATIVE_INFINITY
+  S.isWaitShort = false
   S.wanderRange = WANDER_RANGE.big.full
   S.root = undefined
   S.spinnerAt = 0
@@ -1321,13 +1607,15 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     if (isLive() && e.agentId !== undefined) {
       try {
-        // an agent's run ended: a dialog of its cannot still be open
-        agentEnded(S.model, e.agentId)
-
         const now = await nowOf($)
+
+        // an agent's run ended: a dialog of its cannot still be open, and it is no longer at work; one
+        // that ended with an answer while the main loop rested leaves a report for Claude to be brought
+        agentEnded(S.model, e.agentId, now === undefined ? undefined : { at: now, isResting: isMainResting(now), isAnswer: !e.isAborted && e.reason === 'answer' })
 
         if (now !== undefined) {
           await refresh($, now)
+          await bringReport($, now)
         }
       } catch (error) {
         debug($, `agent end not recorded: ${messageOf(error)}`)
@@ -1362,7 +1650,7 @@ export const register: Register = (on, options) => {
         const now = await nowOf($)
 
         if (now !== undefined) {
-          toolStarted(S.model, e.tool_use_id, String(e.tool), e, now)
+          toolStarted(S.model, e.tool_use_id, String(e.tool), e, now, loopOf(e))
           await refresh($, now)
         }
       } catch (error) {
@@ -1412,16 +1700,17 @@ export const register: Register = (on, options) => {
     return result
   })
 
-  // What still runs in the background when a loop stops (shells, agents, workflows): while
-  // that is not nothing, Claude keeps the calls in flight and neither idles nor sleeps.
+  // What still runs in the background when a loop stops: while agents or workflows do and the
+  // main loop rests, Claude minds them (supervising); shells and monitors keep nothing busy.
   on('classic.Stop', async ($, e, next) => {
-    await background($, e.background_tasks)
+    // the main loop's stop is the word on the agents; one raised inside an agent's loop is not
+    await background($, e.background_tasks, loopOf(e) === '')
 
     return next(e)
   })
 
   on('classic.SubagentStop', async ($, e, next) => {
-    await background($, (e as { background_tasks?: unknown }).background_tasks)
+    await background($, (e as { background_tasks?: unknown }).background_tasks, false)
 
     return next(e)
   })
@@ -1480,14 +1769,16 @@ export const register: Register = (on, options) => {
         const size = sizeNow()
         const isCompact = (e.viewport?.columns ?? RESERVE[size].compactBelow) < RESERVE[size].compactBelow
         const isPicture = S.options.picture
-        // the footer draws solo frames only: a scene's own solo frame stands in for it
-        const frame = soloOf(view.frame)
+        // the footer draws solo frames only: a scene's solo frame stands in for it (the team scenes'
+        // hop excepted: footerOf)
+        const frame = footerOf(view.frame)
         const box = boxOf(frame, size)
         const pieces: Piece[] = footerPieces(e.props.modes, { ...view, sprite: brailleOf(frame) }, { isCompact, x: spot.x, isPicture, size })
         const file = isPicture ? frameFile(rootOf($), frame) : ''
         const { Box, Text, Image } = $.ui.resolve(e)
 
-        S.wanderRange = wanderRoom(isCompact, isPicture, size)
+        // how far he may walk on the row as drawn: a caption (the agents he minds) takes cells from the walk
+        S.wanderRange = footerRange(e.props.modes, { ...view, sprite: brailleOf(frame) }, { isCompact, isPicture, size })
         tree = (
           <Box flexDirection="row">
             {pieces.map(piece =>
@@ -1553,7 +1844,9 @@ export const register: Register = (on, options) => {
 
           S.spinnerAt = (await nowOf($)) ?? S.spinnerAt
 
-          // the footer still had him: it gives him up now, not at his next frame
+          // the footer still had him: it gives him up now, not at his next frame (and when the main
+          // loop was taken to be resting while its spinner was quiet, the next breath or step of a
+          // move sees that it is back: a render hook cannot write state)
           if (wasStale) {
             redraw($)
           }
@@ -1577,7 +1870,9 @@ export const register: Register = (on, options) => {
       const { Box, Text, Image } = $.ui.resolve(e)
       const size = sizeNow()
       const box = boxOf(claude.frame, size)
-      const picture = <Image key="claude" source={{ file: claude.file, format: 'png' }} columns={box.columns} rows={box.rows} alt={claude.alt} />
+      // keyed by its width: an Image that changes size under one key keeps its old placement (a solo
+      // frame after a scene drew two cells right, cut at its box's edge; seen in Ghostty, 2026-10-03)
+      const picture = <Image key={`claude-${box.columns}`} source={{ file: claude.file, format: 'png' }} columns={box.columns} rows={box.rows} alt={claude.alt} />
       // where scenes are drawn, his seat is a scene's width and a space whatever the frame, so the
       // spinner line keeps its place when a solo frame (the flinch) comes between two scenes; the
       // text after him pads it as a sibling of his row, never inside it: the engine centers a picture
@@ -1643,11 +1938,14 @@ export const register: Register = (on, options) => {
         // a scene's, a solo frame's with scenes off, the 5-cell braille's (or alt's) in one row
         const seat = size === 'big' ? (S.options.scenes ? SCENE_BOX.columns : PICTURE.big.columns) + 1 : [...alt].length + 1
         // the seat is padded by the text after him, never by a minWidth on his box: with one, a solo
-        // frame in a scene-wide seat drew shifted right and clipped (Ghostty, 2026-10-02)
+        // frame in a scene-wide seat drew shifted right and clipped (Ghostty, 2026-10-02). And the
+        // picture is keyed by its width: under one key, a solo frame after a scene kept the scene's
+        // placement and drew two cells right, cut at its box's edge (every solo frame of the tour, seen
+        // in Ghostty at 120 columns, 2026-10-03)
         const width = S.options.picture ? box.columns : [...alt].length
         const { Box, Text, Image } = $.ui.resolve(e)
         const picture = S.options.picture ? (
-          <Image key="demo" source={{ file: frameFile(rootOf($), frame), format: 'png' }} columns={box.columns} rows={box.rows} alt={alt} />
+          <Image key={`demo-${box.columns}`} source={{ file: frameFile(rootOf($), frame), format: 'png' }} columns={box.columns} rows={box.rows} alt={alt} />
         ) : (
           <Text color={poseOf(frame) === 'sleep' ? ASLEEP_COLOR : CLAUDE_COLOR}>{alt}</Text>
         )

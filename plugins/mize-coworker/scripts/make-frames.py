@@ -1203,6 +1203,898 @@ def plugged(c, pose, step):
         c.put(SOCKET[0] + 3, SLOTS[0] - 7, YELLOW)
 
 
+# >>> skits control: poses and props
+
+# --- tally: a judge's score paddle, its card showing how many agents are working
+
+TALLY_LOW = Arm(-6, 2)                 # the paddle hanging at his side, its back to us
+TALLY_HIGH = Arm(-9, -4.5)             # held up beside his head
+TALLY_0 = Pose(arms=(REST, TALLY_LOW), eyes='focus', look=(2, 1))
+TALLY_N = Pose(arms=(REST, TALLY_HIGH), eyes='happy', blush=True)
+TALLY_W, TALLY_H = 13, 11              # the card
+TALLY_RIM = {'light': mix(BLUE, WHITE, .25), 'base': BLUE, 'dark': mix(BLUE, BASE, .4)}
+TALLY_STICK = {'light': mix(YELLOW, WHITE, .3), 'base': mix(YELLOW, PEACH, .5), 'dark': mix(PEACH, BASE, .25)}
+TALLY_GLYPHS = {
+    '1': ('..##.', '.###.', '..##.', '..##.', '..##.', '..##.', '.####'),
+    '2': ('.###.', '##.##', '...##', '..##.', '.##..', '##...', '#####'),
+    '3': ('####.', '...##', '...##', '.###.', '...##', '...##', '####.'),
+    '4': ('##.##', '##.##', '##.##', '#####', '...##', '...##', '...##'),
+    '5': ('#####', '##...', '####.', '...##', '...##', '##.##', '.###.'),
+    '6': ('.###.', '##...', '##...', '####.', '##.##', '##.##', '.###.'),
+    '7': ('#####', '...##', '...##', '..##.', '..##.', '.##..', '.##..'),
+    '8': ('.###.', '##.##', '##.##', '.###.', '##.##', '##.##', '.###.'),
+    '9': ('.###.', '##.##', '##.##', '.####', '...##', '...##', '.###.'),
+    '+': ('...', '...', '.#.', '###', '.#.', '...', '...'),
+}
+
+
+def tally_card(c, x, y, text):
+    """The paddle's card, top-left at (x, y): a light face in a colored rim with `text` on it in
+    bold dark digits, or (text None) its plain colored back."""
+    card = rounded(x, y, x + TALLY_W - 1, y + TALLY_H - 1, (1,))
+    c.paint(shade(card, TALLY_RIM, light=1, dark=1))
+    inner = rect(x + 1, y + 1, x + TALLY_W - 2, y + TALLY_H - 2)
+    if text is None:
+        c.fill(inner, mix(BLUE, WHITE, .45))
+        c.fill(rect(x + 1, y + 1, x + TALLY_W - 2, y + 1), mix(BLUE, WHITE, .65))
+        return
+    c.fill(inner, TEXT)
+    c.fill(rect(x + 1, y + 1, x + TALLY_W - 2, y + 1), WHITE)
+    glyphs = [TALLY_GLYPHS[ch] for ch in text]
+    width = sum(len(g[0]) for g in glyphs) + len(glyphs) - 1
+    gx = x + (TALLY_W - width) // 2
+    for g in glyphs:
+        stamp(c, g, gx, y + 2, {'#': BASE})
+        gx += len(g[0]) + 1
+
+
+def tally_stick(c, x, y0, y1):
+    """The paddle's handle, three pixels wide (x the left), from row y0 to row y1."""
+    c.paint(shade(rect(x, y0, x + 2, y1), TALLY_STICK, light=0, dark=0))
+    c.fill(rect(x, y0, x, y1), TALLY_STICK['light'])
+    c.fill(rect(x + 2, y0, x + 2, y1), TALLY_STICK['dark'])
+
+
+def tally_paddle(c, pose, text=None):
+    """The score paddle in his right hand: held up above it, its face to us showing `text`, or
+    (text None) hanging below it at his side, its back to us."""
+    hx, hy = hand(pose)
+    mid = math.floor(hx)                      # the handle's middle column
+    x = mid - TALLY_W // 2
+    hy = math.floor(hy)
+    if text is None:
+        tally_stick(c, mid - 1, hy - 3, hy + 3)
+        tally_card(c, x, hy + 4, None)
+    else:
+        top = hy - 5 - TALLY_H
+        tally_stick(c, mid - 1, top + TALLY_H, hy + 2)
+        tally_card(c, x, top, text)
+    paw(c, mid - 2, hy - 2)
+
+
+# --- radar: a round scope on a short stand, the agents as blips on it
+
+RADAR = (63, 22, 6)                    # the scope's center (between pixels) and radius
+RADAR_BLIPS = ((318, 4.1), (40, 4.0), (140, 4.2))   # bearing (degrees clockwise from up), distance:
+                                                    # each 2x2 inside the rim, clear of every sweep line
+RADAR_DARK = mix(GREEN, BASE, .82)
+RADAR_METAL = {'light': SUBTEXT, 'base': SURFACE2, 'dark': SURFACE1}
+RADAR_WATCH = Pose(look=(2, 1))                  # his right arm reaches behind the scope
+RADAR_CONTENT = Pose(eyes='happy', look=(2, 1), blush=True)
+
+
+def radar_bearing(cx, cy, x, y):
+    return math.degrees(math.atan2(x + .5 - cx, cy - (y + .5))) % 360
+
+
+def radar(c, quarter):
+    """The scope with its sweep at bearing 90 * quarter (0 up, 1 right, 2 down, 3 left), the
+    quarter just swept lit behind it in two flat steps; a blip flares white as the sweep passes
+    it, then fades to green and to dim."""
+    cx, cy, r = RADAR
+    sweep = 90 * quarter
+    # the stand: a short post and a foot on the floor
+    post = rect(cx - 1, cy + r + 1, cx, GROUND - 2)
+    c.fill(post, SURFACE2)
+    c.fill(rect(cx - 1, cy + r + 1, cx - 1, GROUND - 2), SUBTEXT)
+    foot = rounded(cx - 5, GROUND - 1, cx + 4, GROUND, (1,))
+    c.paint(shade(foot, RADAR_METAL, light=1, dark=0))
+    floor(c, cx, 6)
+    # the bezel, the screen, its lit rim
+    face = disc(cx, cy, r)
+    bezel = disc(cx, cy, r + 1.2) - face
+    c.paint({q: (SUBTEXT if (q[0] + .5 - cx) + (q[1] + .5 - cy) < 0 else SURFACE2) for q in bezel})
+    c.fill(face, RADAR_DARK)
+    rim = edge(face)
+    inner = face - rim
+    for x, y in sorted(inner):
+        behind = (sweep - radar_bearing(cx, cy, x, y)) % 360
+        if behind < 45:
+            c.put(x, y, mix(RADAR_DARK, GREEN, .38))
+        elif behind < 90:
+            c.put(x, y, mix(RADAR_DARK, GREEN, .18))
+    c.fill(rim, mix(GREEN, BASE, .15))
+    # the blips: 2x2, white just after the sweep, then green, then dim
+    for bearing, dist in RADAR_BLIPS:
+        a = math.radians(bearing)
+        bx, by = round(cx + math.sin(a) * dist) - 1, round(cy - math.cos(a) * dist) - 1
+        behind = (sweep - bearing) % 360
+        color = WHITE if behind < 90 else GREEN if behind < 180 else mix(GREEN, RADAR_DARK, .35)
+        c.fill(rect(bx, by, bx + 1, by + 1) & inner, color)
+    # the sweep line, two pixels wide, from the center to the rim
+    a = math.radians(sweep)
+    line = capsule(cx, cy, cx + math.sin(a) * r, cy - math.cos(a) * r, 1.0) & inner
+    c.fill(line, mix(GREEN, WHITE, .7))
+
+
+# --- radio: mission control, a headset with a mic
+
+RADIO_LISTEN = Pose(look=(-2, -2))
+RADIO_TALK = Pose(look=(-2, 0), mouth='radio')
+RADIO_COPY = Pose(eyes='happy', blush=True)
+MOUTHS['radio'] = ('####', '#tt#', '.##.')
+RADIO_SET = {'light': mix(LAVENDER, WHITE, .35), 'base': LAVENDER, 'dark': mix(LAVENDER, BASE, .35)}
+
+
+RADIO_ARCS = (('##.', '.##', '.##', '##.'),                          # a short sound arc, bulging right,
+              ('##..', '.##.', '..##', '..##', '.##.', '##..'))       # and a longer one past it
+
+
+def radio_arcs(c, x, y, outward):
+    """Two sound arcs centered between rows y - 1 and y, beginning at column x and going
+    outward (1: to the right, bulging right; -1: to the left from x, bulging left)."""
+    at = x
+    for rows in RADIO_ARCS:
+        w = len(rows[0])
+        if outward < 0:
+            rows = tuple(r[::-1] for r in rows)
+        stamp(c, rows, at if outward > 0 else at - w + 1, y - len(rows) // 2, {'#': WHITE})
+        at += (w + 1) * outward
+
+
+def radio_headset(c, pose, light=None, hear=False, talk=False, check=False):
+    """A headset: a band over the top of his head, an ear cup at his left (our left), a boom from
+    it to a mic by his mouth. light: the cup's lamp color; hear: sound arcs coming in by the
+    cup; talk: sound arcs going out by the mic; check: a green check beside the cup."""
+    x0, y0, x1, y1 = body_box(pose)
+    pts = [(x0 - .5, y0 + 4), (x0 + 3.5, y0 - 1), (x1 - 3.5, y0 - 1), (x1 + .5, y0 + 4)]
+    band = set()
+    for a, b in zip(pts, pts[1:]):
+        band |= capsule(a[0], a[1], b[0], b[1], 1.0)
+    c.paint(shade(band, RADIO_SET, light=1, dark=0))
+    c.fill(rounded(x1 - 1, y0 + 2, x1 + 2, y0 + 7, (1,)), RADIO_SET['dark'])       # the pad
+    cup = rounded(x0 - 4, y0 + 1, x0 + 2, y0 + 9, (2, 1))
+    c.paint(shade(cup, RADIO_SET, light=2, dark=2))
+    boom = line_px([(x0 + 1, y0 + 9), (x0 + 5, y0 + 13), (x0 + 13, y0 + 15)])
+    c.fill(set(boom), BASE)
+    c.fill(rounded(x0 + 13, y0 + 14, x0 + 17, y0 + 16, (1,)), BASE)                 # the mic
+    c.put(x0 + 14, y0 + 14, SURFACE2)
+    c.fill(rect(x0 - 3, y0 + 3, x0, y0 + 6), SURFACE1)                              # the lamp's socket
+    c.fill(rect(x0 - 2, y0 + 4, x0 - 1, y0 + 5), light or SURFACE2)                 # the lamp, off or lit
+    if hear:
+        radio_arcs(c, x0 - 6, y0 + 6, -1)
+    if talk:
+        radio_arcs(c, x0 + 23, y0 + 17, 1)
+    if check:
+        stamp(c, ('......gg', '.....gg.', 'gg..gg..', '.gggg...', '..gg....'), x0 - 14, y0 + 3,
+              {'g': GREEN})
+# <<< skits control
+
+
+# >>> skits helpers: poses and props
+# --- skit "report": a helper brings him the finished report (a background agent is done)
+
+REPORT_REACH = Arm(-6.5, -4)                   # his right hand out to the page
+REPORT_HOLD = Arm(-8.5, -8.5, elbow=ELBOW)     # the forearm up, the page held by his face
+REPORT_TAKE = Pose(look=(2, 0), arms=(REST, REPORT_REACH))
+REPORT_READ = Pose(eyes='focus', look=(2, -2), arms=(REST, REPORT_HOLD))
+REPORT_GLAD = Pose(eyes='happy', look=(1, 0), blush=True, arms=(REST, REPORT_HOLD))
+REPORT_INK = mix(SUBTEXT, SURFACE2, .55)
+REPORT_TICK, REPORT_TICK_DARK = rgb('#40a02b'), rgb('#2c7a1c')
+REPORT_HELD = (57, 1)                          # the page's top-left while he holds it
+
+REPORT_PAGE = ('wwwwwwwk..',
+               'wbbbbwwkk.',
+               'wbbbbwwkkk',
+               'wwwwwwwwwe',
+               'wiiiiiiiwe',
+               'wwwwwwwwwe',
+               'wiiiiwiiwe',
+               'wwwwwwwwwe',
+               'wiiiiiiwwe',
+               'wwwwwwwwwe',
+               'wiiiwwwwwe',
+               'wwwwwwwwwe',
+               'eeeeeeeeee')
+REPORT_CHECK = ('.......gg',
+                '......ggd',
+                'gg...ggd.',
+                'dgg.ggd..',
+                '.dgggd...',
+                '..dgd....')
+REPORT_ARM = ('....lb',                       # the helper's left arm raised, from its side
+              '....lb',                       # up past its head (the right arm mirrors it)
+              '...lb.',
+              '..lb..',
+              '.lb...',
+              'lb....',
+              'lb....',
+              'bd....')
+REPORT_CHEER = ('lb',                         # the helper's left arm thrown straight up beside
+                'lb',                         # its head, empty-handed (the right one mirrors it)
+                'lb',
+                'lb',
+                'lb',
+                'lb',
+                'bd')
+
+
+def report_page(c, x, y, checked=False):
+    """The report: a white page 10x13 with a dog-eared corner, a blue title and grey lines of
+    text; checked, a bold green check over its middle (clear of the paw that holds it)."""
+    stamp(c, REPORT_PAGE, x, y, {'w': WHITE, 'e': TEXT, 'k': SUBTEXT, 'b': BLUE, 'i': REPORT_INK})
+    if checked:
+        stamp(c, REPORT_CHECK, x + 1, y + 4, {'g': REPORT_TICK, 'd': REPORT_TICK_DARK})
+
+
+def report_helper(c, pose, x, foot, hop=0, page=False, cheer=False):
+    """The helper (mini_claude) at x, looking at him, laid over him with a deep line where it
+    covers him; page: its arms raised from its sides, the report held over its head; cheer:
+    both arms thrown straight up, empty-handed."""
+    own = Canvas(SOLO_W)
+    mini_claude(own, x, foot, hop, shadow=False)
+    top = foot - 10 - hop
+    if page or cheer:
+        skin = {'l': SKIN['light'], 'b': SKIN['base'], 'd': SKIN['dark']}
+        own.erase(rect(x, top + 4, x + 1, top + 6) | rect(x + 17, top + 4, x + 18, top + 6))
+        if page:
+            arm_l, at_l, at_r, at_y = REPORT_ARM, x, x + 13, top - 3
+        else:
+            arm_l, at_l, at_r, at_y = REPORT_CHEER, x, x + 17, top - 2
+        arm_r = tuple(row[::-1] for row in arm_l) if page else arm_l   # straight: lit at the left too
+        arms = mask_of(arm_l, at_l, at_y) | mask_of(arm_r, at_r, at_y)
+        stamp(own, arm_l, at_l, at_y, skin)
+        stamp(own, arm_r, at_r, at_y, skin)
+        own.fill(around(arms) & mask_of(MINI, x, top) - arms, SKIN['deep'])
+        if page:
+            report_page(own, x + 5, top - 15)
+            for hx in (x + 4, x + 13):
+                stamp(own, ('lb', 'bd'), hx, top - 3, skin)
+    floor(c, x + 9.5, 6 if hop else 8, foot + 1)
+    him = {q for q in c.px if q[1] <= GROUND}
+    c.fill(around(set(own.px)) & him, SKIN['deep'])
+    c.paste(own)
+
+
+def report(c, pose, step):
+    """1: the helper coming in at the right edge, the page over its head; 2: hopping beside
+    him, the page held up to his reaching hand; 3: he holds the page up by his face and reads
+    it, the helper watching; 4: a green check on the page, the helper hopping, arms up. The helper
+    walks in 2 pixels a step (55, 53, 51), so the page stays whole in the frame."""
+    hx, hy = hand(pose)
+    if step == 1:
+        report_helper(c, pose, 55, GROUND, page=True)
+    elif step == 2:
+        report_helper(c, pose, 53, GROUND, hop=2, page=True)
+        paw(c, math.floor(hx) - 2, math.floor(hy) - 2)
+    else:
+        report_page(c, *REPORT_HELD, checked=step == 4)
+        paw(c, math.floor(hx) - 2, math.floor(hy) - 2, pose)
+        # 4: a little jump for joy, arms up; at hop 1 its legs still reach the floor, so it
+        # does not hang in the air for the whole second report4 is held
+        report_helper(c, pose, 51, GROUND, hop=1 if step == 4 else 0, cheer=step == 4)
+        if step == 4:
+            sparkle(c, 68, 6, YELLOW)
+            sparkle(c, 55, 2, YELLOW)
+
+
+# --- skit "launch": a small rocket lifts off at his right
+
+ROCKET = ('.....l.....',
+          '....lRd....',
+          '....lRd....',
+          '...lRRRd...',
+          '..lRRRRRd..',
+          '..WTTTTTS..',
+          '..WTTTTTS..',
+          '..WTgbbTS..',
+          '..WTbbbTS..',
+          '..WTbbBTS..',
+          '..WTTTTTS..',
+          '..WTTTTTS..',
+          '.lWTTTTTSd.',
+          'lRWTTTTTSRd',
+          'lRWTTTTTSRd',
+          'lR.nnnnn.Rd',
+          'l...nnn...d')
+LAUNCH_WOW = Pose(eyes='wide', look=(2, 0), mouth='o')
+LAUNCH_BYE = Pose(eyes='happy', look=(2, -2), blush=True)
+ROCKET_RED = mix(RED, rgb('#d20f39'), .5)      # Mocha's RED alone reads pink this small
+
+
+def rocket(c, x, y):
+    """A small rocket 11x17, its top-left at (x, y): a white body lit from the left, a red nose
+    and fins, a blue porthole."""
+    stamp(c, ROCKET, x, y, {'l': mix(ROCKET_RED, WHITE, .3), 'R': ROCKET_RED, 'd': mix(ROCKET_RED, BASE, .3),
+                            'W': WHITE, 'T': TEXT, 'S': SUBTEXT, 'g': WHITE, 'b': BLUE,
+                            'B': mix(BLUE, BASE, .3), 'n': SUBTEXT})
+
+
+def rocket_flame(c, cx, y, n):
+    """A flame under a nozzle centered at column cx, from row y, n rows long."""
+    for k in range(n):
+        w = 2 if k < n - 2 else 1 if k < n - 1 else 0
+        for dx in range(-w, w + 1):
+            col = WHITE if abs(dx) == 0 and k < n - 2 else YELLOW if abs(dx) <= 1 and k < n - 1 else PEACH
+            c.put(cx + dx, y + k, col)
+
+
+def rocket_smoke(c, puffs):
+    """Smoke: round puffs (cx, cy, r) drawn in turn, each one over the last, lit at its upper
+    left and grey at its lower right, so the cloud billows."""
+    for cx, cy, r in puffs:
+        for x, y in sorted(disc(cx, cy, r)):
+            s = ((x + .5 - cx) * .6 + (y + .5 - cy) * .8) / r
+            c.put(x, y, WHITE if s < -.35 else SUBTEXT if s > .4 else TEXT)
+
+
+def launch(c, step):
+    """1: the rocket on the floor at his right; 2: ignition, a few pixels up on its flame,
+    smoke billowing at its base, the flame drawn over it; 3: leaving through the top right
+    over a plume of smoke. It climbs straight up column 59, a pixel clear of his arm's tip."""
+    if step == 1:
+        floor(c, 64.5, 6)
+        rocket(c, 59, 21)
+    elif step == 2:
+        floor(c, 64.5, 6)
+        rocket(c, 59, 17)
+        rocket_smoke(c, ((64.5, 38.5, 2.0), (52.5, 37.5, 2.2), (69.5, 36, 2.8), (56, 36, 2.8)))
+        rocket_flame(c, 64, 34, 5)
+    else:
+        rocket_smoke(c, ((64.5, 18, 1.3), (63.5, 21.5, 1.8), (65, 24.5, 2.0), (63, 27.5, 2.4), (65, 30.5, 2.6),
+                         (63.5, 33.5, 3.0), (54, 37.5, 2.0), (68.5, 35.5, 2.8), (58, 36, 2.8), (63, 36.5, 3.2)))
+        rocket(c, 59, -6)
+        rocket_flame(c, 64, 11, 6)
+
+
+# --- skit "perch": a helper stands on his head
+
+PERCH_1 = Pose(lift=-3, tall=-2, wide=1, look=(0, -2))
+PERCH_2 = Pose(lift=-3, tall=-3, wide=1, eyes='squeeze')
+PERCH_X = 25
+
+
+def perch(c, pose, hop):
+    """The helper standing on his head (hop: in a hop off it), a shadow under it there."""
+    x0, y0, x1, y1 = body_box(pose)
+    head = rounded(x0, y0, x1, y1, CORNER)
+    a, b = (PERCH_X + 3, PERCH_X + 15) if not hop else (PERCH_X + 5, PERCH_X + 13)
+    c.fill(rect(a, y0, b, y0) & head, SKIN['base'])
+    mini_claude(c, PERCH_X, y0 - 1, hop, 0, shadow=False)
+    if hop:                     # two little springs under it, off his head
+        for x, d in ((PERCH_X + 1, -1), (PERCH_X + 17, 1)):
+            c.fill({(x, y0 - 2), (x + d, y0 - 3), (x + 2 * d, y0 - 4)}, TEXT)
+
+
+# --- skit "conduct": he conducts the orchestra of agents
+
+CONDUCT_UP = Arm(-9.5, -11.5, elbow=ELBOW)     # the baton raised up and out
+CONDUCT_LOW = Arm(-6.5, 4.5)                    # swept down low
+CONDUCT_1 = Pose(arms=(REST, CONDUCT_UP), eyes='happy', blush=True)
+CONDUCT_2 = Pose(arms=(REST, CONDUCT_LOW), eyes='happy', blush=True, mouth='o')
+CONDUCT_3 = Pose(arms=(REST, WAVE_IN), eyes='happy', blush=True)
+CONDUCT_NOTE = ('..##...',
+                '..####.',
+                '..##.##',
+                '..##..#',
+                '..##...',
+                '####...',
+                '####...',
+                '.##....')
+CONDUCT_BEAM = ('..#######',
+                '..#######',
+                '..##...##',
+                '..##...##',
+                '..##...##',
+                '####.####',
+                '####.####',
+                '.##...##.')
+
+
+def conduct_baton(c, pose, tip):
+    """A thin white baton from his right hand out to `tip`."""
+    hx, hy = hand(pose)
+    own = claude(pose).px
+    stick = [q for q in line_px([(math.floor(hx), math.floor(hy)), tip]) if q not in own]
+    for i, q in enumerate(stick):
+        c.put(q[0], q[1], WHITE)
+        if i < 2:
+            c.fill(set(near(*q)) - set(own) - set(stick), mix(PEACH, BASE, .15))
+
+
+def conduct(c, pose, step):
+    """The baton in his right hand (1 up and out, 2 swept down low, 3 up and in toward his
+    head) and music notes in sky, pink and yellow drifting up at the upper left, 2 pixels a
+    step and clear of his head (the loop plays 1, 2, 3, 2, so they bob to the beat)."""
+    tips = {1: (69, 0), 2: (69, 35), 3: (50, 1)}
+    conduct_baton(c, pose, tips[step])
+    notes = {1: [(CONDUCT_NOTE, 0, 11, SKY), (CONDUCT_BEAM, 6, 2, PINK)],
+             2: [(CONDUCT_NOTE, 1, 9, SKY), (CONDUCT_BEAM, 7, 1, PINK), (CONDUCT_NOTE, 0, 19, YELLOW)],
+             3: [(CONDUCT_NOTE, 2, 7, SKY), (CONDUCT_BEAM, 8, 0, PINK), (CONDUCT_NOTE, 1, 17, YELLOW)]}
+    for rows, x, y, col in notes[step]:
+        stamp(c, rows, x, y, {'#': col})
+# <<< skits helpers
+
+
+# >>> skits gags: poses and props
+
+# --- juggle: three balls in a shower over his head, each one spot further round every frame
+
+JUGGLE_UP = Arm(-6, -9)            # the hand at a throw or a catch, up by its ball
+JUGGLE_LOW = Arm(-2.5, 2.5)        # the other hand, low
+JUGGLE_MID = Arm(-4.5, -4.5)       # both hands on their way
+JUGGLE_BASE = Pose(tall=-1, look=(0, -2), mouth='juggle_line')     # lips pressed, concentrating
+MOUTHS['juggle_line'] = ('####',)
+JUGGLE_1 = replace(JUGGLE_BASE, arms=(JUGGLE_UP, JUGGLE_LOW))
+JUGGLE_2 = replace(JUGGLE_BASE, arms=(JUGGLE_LOW, JUGGLE_UP))
+JUGGLE_3 = replace(JUGGLE_BASE, arms=(JUGGLE_MID, JUGGLE_MID))
+# the ball centers round the loop: just thrown from his left hand, at the top, falling to his right
+JUGGLE_SPOTS = ((9, 10), (35, 2), (60, 10))
+JUGGLE_COLORS = (BLUE, GREEN, mix(YELLOW, rgb('#f6c945'), .5))
+JUGGLE_BALL = ('.lbb.', 'lwbbb', 'bbbbb', 'bbbbd', '.ddd.')
+JUGGLE_SPEED = ((-4, 0, 190), (-5, 1, 130), (-6, 1, 80))    # behind the top ball: (dx, dy, alpha)
+
+
+def juggle_ball(c, cx, cy, color):
+    """A 5x5 ball centered at (cx, cy), a white glint at its upper left."""
+    stamp(c, JUGGLE_BALL, cx - 2, cy - 2,
+          {'l': mix(color, WHITE, .45), 'w': WHITE, 'b': color, 'd': mix(color, BASE, .35)})
+
+
+def juggle_balls(c, step):
+    """The three balls on their spots, each one spot further round than in the step before; a
+    pale speed line behind the top one shows which way they go round."""
+    tx, ty = JUGGLE_SPOTS[1]
+    for dx, dy, a in JUGGLE_SPEED:
+        c.put(tx + dx, ty + dy, fade(TEXT, a))
+    for k, (x, y) in enumerate(JUGGLE_SPOTS):
+        juggle_ball(c, x, y, JUGGLE_COLORS[(k - step) % 3])
+
+
+def juggle_tongue(c, pose):
+    """The tip of his tongue poking out at the right corner of his mouth, in concentration."""
+    x0, y0, x1, _ = body_box(pose)
+    mx, my = (x0 + x1 + 1) // 2 - len(MOUTHS['juggle_line'][0]) // 2, y0 + EYE_TOP + 9
+    c.fill(rect(mx + 3, my + 1, mx + 4, my + 2), PINK)
+    c.put(mx + 4, my + 2, mix(PINK, RED, .4))
+
+
+# --- gum: a bubble that grows and pops
+
+GUM_TONES = {'light': mix(PINK, WHITE, .3), 'base': mix(PINK, RED, .5), 'dark': mix(RED, MAUVE, .3)}
+GUM_RIM = mix(RED, BASE, .25)
+GUM_1 = Pose(eyes='gum_lidded')
+EYES['gum_lidded'] = (0, 3, ('####', '#o##', '####', '.##.'), False)   # heavy lids, unbothered
+GUM_2 = Pose(eyes='wide')
+GUM_3 = FLINCH
+
+
+def gum_bubble(c, pose, r):
+    """A pink bubble of radius r blown from his mouth: lit from the upper left, a darker rim,
+    a white glint."""
+    x0, y0, x1, _ = body_box(pose)
+    cx, cy = (x0 + x1 + 1) / 2, y0 + EYE_TOP + 10.5
+    ball = disc(cx, cy, r)
+    for x, y in sorted(ball):
+        s = ((x + .5 - cx) * .6 + (y + .5 - cy) * .8) / r
+        c.put(x, y, GUM_TONES['light'] if s < -.45 else GUM_TONES['dark'] if s > .45 else GUM_TONES['base'])
+    if r > 4:
+        c.fill(edge(ball), GUM_RIM)
+        gx, gy = math.floor(cx - r * .45), math.floor(cy - r * .45)
+        c.fill({(gx, gy), (gx + 1, gy - 1), (gx + 2, gy - 1), (gx, gy + 1)}, WHITE)
+    else:
+        c.put(math.floor(cx) - 1, math.floor(cy) - 1, WHITE)
+
+
+# the popped bubble splatted over his mouth: blobs as (dx, dy, radius) from the mouth, two
+# strands dripping off his chin as (left dx, right dx, bottom dy), and flecks flung onto the
+# top of his head and above his right brow as (dx, dy) from the top middle of his head
+GUM_SPLAT = ((0, 0, 4.6), (-7, -1, 3.1), (7, 1, 3.1), (-3, 3.5, 2.4), (4, -3.2, 2.2))
+GUM_STRANDS = ((-4, -3, 7), (6, 6, 6))
+GUM_FLECKS = ((-5, -1), (-4, -1), (-3, -1), (-4, 0), (-4, 1), (14, 3), (15, 3), (15, 4))
+# white burst marks ringing the splat two pixels clear of it, (ax, ay, bx, by) from the mouth:
+# out to each side, up between his eyes, and down and out at the lower corners
+GUM_BURSTS = ((-16, 0, -13, 0), (12, 0, 15, 0), (0, -11, 0, -8), (-12, 3, -14, 5), (11, 3, 13, 5))
+
+
+def gum_pop(c, pose):
+    """The bubble popped: a splat of pink gum stuck over his mouth and cheeks, two strands
+    dripping off his chin, flecks on the top of his head and above his brow, a deep line under
+    it where it sits on him, and short white burst marks ringing the splat."""
+    x0, y0, x1, y1 = body_box(pose)
+    cx, cy = (x0 + x1 + 1) // 2, y0 + EYE_TOP + 10
+    film = set()
+    for dx, dy, r in GUM_SPLAT:
+        film |= disc(cx + dx, cy + dy, r)
+    for a, b, bottom in GUM_STRANDS:
+        film |= rect(cx + a, cy, cx + b, cy + bottom)
+    film = tidy(film)
+    goo = film | {(cx + dx, y0 + dy) for dx, dy in GUM_FLECKS}
+    body = rounded(x0, y0, x1, y1, CORNER)
+    c.fill({(x, y + 1) for x, y in goo if (x, y + 1) not in goo} & body, SKIN['deep'])
+    c.paint(shade(goo, GUM_TONES, light=1, dark=1))
+    c.fill({(cx - 2, cy - 2), (cx - 1, cy - 3), (cx, cy - 3)}, mix(PINK, WHITE, .7))
+    for ax, ay, bx, by in GUM_BURSTS:
+        c.fill(set(line_px([(cx + ax, cy + ay), (cx + bx, cy + by)])), WHITE)
+
+
+# --- popcorn: he watches the agents like a film
+
+POPCORN_1 = Pose(look=(-2, -2), mouth='o')
+POPCORN_2 = Pose(eyes='happy', mouth='popcorn_munch', blush=True)
+MOUTHS['popcorn_munch'] = ('#.#.#', '.#.#.')
+POPCORN_RIM = (54, 23)            # the bucket's rim: left column, top row
+POPCORN_KERNEL = ('.wW.', 'wWWw', 'wwwy', '.yy.')
+POPCORN_KERNEL_COLORS = {'W': WHITE, 'w': mix(YELLOW, WHITE, .6), 'y': mix(YELLOW, PEACH, .35)}
+POPCORN_TRAIL = ((5, -1, 200), (7, -2, 130), (9, -2, 80))   # behind the flying kernel: (dx, dy, alpha)
+# the bucket's stripes, a cinema red (toward Catppuccin Latte's red) and white: light, base, dark
+POPCORN_RED = mix(RED, rgb('#d20f39'), .55)
+POPCORN_REDS = (mix(RED, rgb('#d20f39'), .25), POPCORN_RED, mix(POPCORN_RED, BASE, .3))
+POPCORN_WHITES = (WHITE, WHITE, TEXT)
+
+
+def popcorn_bucket(c, pose):
+    """A red-and-white striped bucket at his right side, heaped with popcorn, his paw at its rim."""
+    x0, y0 = POPCORN_RIM
+    w, h = 13, 12
+    bucket = set()
+    for j in range(h):
+        k = j // 5
+        bucket |= rect(x0 + k, y0 + j, x0 + w - 1 - k, y0 + j)
+    stripes = (0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0)      # 0 red, 1 white, by column
+    for x, y in sorted(bucket):
+        tone = 0 if x - x0 <= 1 else 2 if x - x0 >= w - 2 or y == y0 + h - 1 else 1
+        c.put(x, y, (POPCORN_WHITES if stripes[x - x0] else POPCORN_REDS)[tone])
+    c.fill(rect(x0, y0, x0 + w - 1, y0), WHITE)
+    heap = set()
+    for hx, hy, r in ((x0 + 2.5, y0 - 1, 2.2), (x0 + 5.5, y0 - 2.5, 2.4), (x0 + 9, y0 - 2, 2.3),
+                      (x0 + 11, y0 - .5, 1.8), (x0 + 7.5, y0 - 4.5, 1.9), (x0 + 4, y0 - 4, 1.4)):
+        heap |= disc(hx, hy, r)
+    heap = tidy(heap) - bucket
+    c.paint(shade(heap, {'light': WHITE, 'base': mix(YELLOW, WHITE, .65), 'dark': mix(YELLOW, PEACH, .3)}, light=1, dark=1))
+    c.fill({(x0 + 4, y0 - 2), (x0 + 8, y0 - 3), (x0 + 10, y0 - 1)}, YELLOW)
+    paw(c, x0 - 1, y0 - 1, pose, bucket | heap)
+
+
+def popcorn_dropped(c):
+    """A kernel he dropped, on the floor by the bucket."""
+    stamp(c, POPCORN_KERNEL, 66, 34, POPCORN_KERNEL_COLORS)
+
+
+def popcorn_kernel(c, pose):
+    """One kernel in the air beside his open mouth and clear of his eye, on its way in from
+    the bucket (a faint trail behind it), a deep line where it lies on him."""
+    x0, y0, x1, y1 = body_box(pose)
+    x, y = (x0 + x1 + 1) // 2 + 3, y0 + EYE_TOP + 7
+    c.fill(around(mask_of(POPCORN_KERNEL, x, y)) & rounded(x0, y0, x1, y1, CORNER), SKIN['deep'])
+    for dx, dy, a in POPCORN_TRAIL:
+        c.put(x + dx, y + dy, fade(POPCORN_KERNEL_COLORS['w'], a))
+    stamp(c, POPCORN_KERNEL, x, y, POPCORN_KERNEL_COLORS)
+
+
+# --- plane: a paper plane that comes back
+
+PLANE_1 = Pose(arms=(REST, Arm(-5, -7)), look=(2, -2))
+PLANE_2 = Pose(arms=(REST, Arm(-7, -8)), eyes='happy', blush=True)
+PLANE_3 = Pose(look=(2, -2), mouth='plane_smile', blush=True)
+PLANE_4 = Pose(eyes='wide', look=(-2, 0))
+PLANE_5 = FLINCH
+MOUTHS['plane_smile'] = ('#..#', '.##.')
+PLANE_SIZE = (15, 5.5, 3.4, 4.5)       # length, the upper wing's spread, the lower's, the notch
+
+
+def plane_shape(nx, ny, angle):
+    """A paper plane seen from a little above, an arrowhead with a notch at its tail, its nose
+    at (nx, ny) pointing `angle` degrees below the horizontal to the right: (the upper wing,
+    the lower wing in its shade) as masks."""
+    a = math.radians(angle)
+    ca, sa = math.cos(a), math.sin(a)
+
+    def at(u, v):
+        return (nx + .5 + u * ca - v * sa, ny + .5 + u * sa + v * ca)
+    L, up, down, notch = PLANE_SIZE
+    nose, fold = at(1, 0), at(-L + notch, .3)
+    upper = polygon([nose, at(-L, -up), fold])
+    lower = polygon([nose, fold, at(-L + 1.5, down)]) - upper
+    return upper, lower
+
+
+def plane_paper(c, nx, ny, angle, hide=frozenset()):
+    """The plane, white above its fold and lavender grey below, less any pixels in `hide`."""
+    upper, lower = plane_shape(nx, ny, angle)
+    c.fill(upper - hide, WHITE)
+    c.fill({q for q in upper if any(n in lower for n in near(*q))} - hide, TEXT)
+    c.fill(lower - hide, mix(SUBTEXT, LAVENDER, .3))
+    return upper | lower
+
+
+def plane_speed(c, lines):
+    """Short pale speed lines, each from (ax, ay) to (bx, by)."""
+    for ax, ay, bx, by in lines:
+        c.fill(set(line_px([(ax, ay), (bx, by)])), fade(TEXT, 170))
+
+
+def plane_alarm(c, x, y):
+    """A small yellow exclamation mark, its top at (x, y)."""
+    c.fill(rect(x, y, x + 1, y + 3), YELLOW)
+    c.fill(rect(x, y + 5, x + 1, y + 6), YELLOW)
+
+
+def plane_held(c, pose):
+    """The plane up at his right, pinched under its fold by his paw."""
+    hx, hy = hand(pose)
+    plane_paper(c, math.floor(hx) + 8, math.floor(hy) - 6, -6)
+    paw(c, math.floor(hx) - 2, math.floor(hy) - 3)
+
+
+PLANE_STUCK = (2, 2, 10)               # the nose's offset from the body's top left, the angle
+
+
+def plane_bonk(c, pose):
+    """The plane's nose stuck in the top left of his head, flown in from the left, a deep dent
+    round it; two stars over his head."""
+    x0, y0, x1, y1 = body_box(pose)
+    head = rounded(x0, y0, x1, y1, CORNER)
+    dx, dy, angle = PLANE_STUCK
+    plane = plane_paper(c, x0 + dx, y0 + dy, angle, head)
+    c.fill(around(plane - head) & head, SKIN['deep'])
+    sparkle(c, x0 + 15, y0 - 5, YELLOW)
+    sparkle(c, x0 + 27, y0 - 3, YELLOW)
+
+
+# --- zen: he meditates, floating, while the agents work
+
+ZEN_ARM = Arm(-7, -1)
+ZEN_1 = Pose(eyes='sleepy', feet=(3, 3, 3, 3), arms=(ZEN_ARM, ZEN_ARM), mouth='zen_smile')
+ZEN_2 = replace(ZEN_1, lift=1, feet=(4, 4, 4, 4))
+MOUTHS['zen_smile'] = ('#..#', '.##.')
+ZEN_TWINKLE = ('..c..', '..c..', 'ccwcc', '..c..', '..c..')
+
+
+def zen_twinkle(c, x, y):
+    """A lavender twinkle 5x5 centered at (x, y), white at its heart."""
+    stamp(c, ZEN_TWINKLE, x - 2, y - 2, {'c': LAVENDER, 'w': WHITE})
+# <<< skits gags
+
+
+# >>> skits time: poses and props
+# --- garden: a potted plant at his right that grows the longer the agents run
+
+GARDEN_LOOK = Pose(look=(2, 1))                                   # eyeing the pot
+GARDEN_PROUD = Pose(eyes='happy', look=(2, 0), blush=True)        # it flowered
+GARDEN_WATER = Pose(arms=(REST, HIGH), look=(2, 1))               # the can held up over the pot
+
+GARDEN_POT_XY = (57, 29)          # the pot's top-left: 12 wide, the soil on row 29, its foot on row 37
+GARDEN_STEM = 62                  # the stem's left column (it is 2 wide); the plant keeps clear of
+                                  # his right hand (rows 18 to 24, out to column 59)
+GARDEN_CLAY = {'L': rgb('#f0a073'), 'l': rgb('#d9744a'), 'b': rgb('#c45a38'), 'd': rgb('#8f3f28'),
+               's': rgb('#6b4434')}
+GARDEN_POT = ('LssssssssssL',
+              'LLLLLLLLLLLL',
+              'llbbbbbbbbbd',
+              '.dddddddddd.',
+              '.lbbbbbbbbd.',
+              '.lbbbbbbbbd.',
+              '..lbbbbbbd..',
+              '..lbbbbbbd..',
+              '..dddddddd..')
+GARDEN_GREENS = {'L': mix(GREEN, WHITE, .35), 'g': GREEN, 'D': mix(GREEN, BASE, .3),
+                 's': mix(GREEN, BASE, .15), 'S': mix(GREEN, BASE, .4)}
+GARDEN_LEAF = ('...LL',           # a leaf reaching up and out to the right from the stem
+               '.LLgg',
+               'ggggD',
+               '.DD..')
+GARDEN_SPROUT = ('LL....LL',
+                 'gLL..LLg',
+                 '.Dg..gD.')
+GARDEN_PETALS = {'P': mix(PINK, WHITE, .25), 'p': mix(PINK, RED, .35), 'q': mix(RED, MAUVE, .35),
+                 'y': YELLOW, 'Y': mix(YELLOW, PEACH, .6), 'g': GREEN, 'D': mix(GREEN, BASE, .3)}
+GARDEN_BUD = ('.PP.',
+              'Pppq',
+              'gqqg',
+              'gggD',
+              '.gD.')
+GARDEN_FLOWER = ('.PP.Pp.',
+                 'PPPpPpq',
+                 'PpyyYpq',
+                 '.pyYYq.',
+                 'PpYYYqq',
+                 'ppqpqqq',
+                 '.qq.qq.')
+
+
+def garden_pot(c):
+    """A terracotta pot on the floor at his right: a lit rim round the soil, a tapered body."""
+    x, y = GARDEN_POT_XY
+    floor(c, x + 6, 6, y + 9)
+    stamp(c, GARDEN_POT, x, y, GARDEN_CLAY)
+
+
+def garden_leaf(c, y, left):
+    """A leaf on the stem, its stalk end on row y + 2, on the stem's left or its right."""
+    if left:
+        stamp(c, tuple(r[::-1] for r in GARDEN_LEAF), GARDEN_STEM - 5, y, GARDEN_GREENS)
+    else:
+        stamp(c, GARDEN_LEAF, GARDEN_STEM + 2, y, GARDEN_GREENS)
+
+
+def garden_stem(c, top):
+    """The stem, two pixels wide (lit on the left), from row `top` down to the soil."""
+    c.fill(rect(GARDEN_STEM, top, GARDEN_STEM, 28), GARDEN_GREENS['s'])
+    c.fill(rect(GARDEN_STEM + 1, top, GARDEN_STEM + 1, 28), GARDEN_GREENS['S'])
+
+
+def garden_plant(c, stage):
+    """The pot and the plant at a stage: 1 a sprout, 2 a stem with two leaves, 3 taller with a
+    third leaf and a closed bud, 4 the bud open in a pink flower."""
+    garden_pot(c)
+    s = GARDEN_STEM
+    if stage == 1:
+        garden_stem(c, 27)
+        stamp(c, GARDEN_SPROUT, s - 3, 25, GARDEN_GREENS)
+        return
+    garden_stem(c, {2: 20, 3: 18, 4: 19}[stage])
+    garden_leaf(c, 25, True)
+    garden_leaf(c, 21, False)
+    if stage == 2:
+        stamp(c, ('.LL', 'Lg.'), s, 18, GARDEN_GREENS)
+    if stage >= 3:
+        garden_leaf(c, 14, True)
+    if stage == 3:
+        stamp(c, GARDEN_BUD, s - 1, 13, GARDEN_PETALS)
+    if stage == 4:
+        stamp(c, GARDEN_FLOWER, s - 3, 13, GARDEN_PETALS)
+
+
+GARDEN_CAN = ('..DDD........',      # a watering can tipped forward, its spout down to the right
+              '.DD.DDD......',      # the handle a 2-pixel loop, so it survives at terminal size
+              '.LL...DD.....',
+              'LBBLL.DD.....',
+              'BBBBBLLL.....',
+              'BBBBBBBBL....',
+              '.BBBBBBBBss..',
+              '..DBBBBBBDss.',
+              '....DDDDD..RR',
+              '...........RR')
+GARDEN_CAN_COLORS = {'L': mix(SKY, WHITE, .45), 'B': SKY, 'D': mix(SKY, SAPPHIRE, .7),
+                     's': SKY, 'R': mix(SKY, WHITE, .45)}
+GARDEN_CAN_XY = (51, 0)           # the can's top-left: on his raised hand, its rose over the stem
+GARDEN_DROP = ('.s', 'ss', 'Ss')
+GARDEN_SPRAY = ((62, 10), (57, 11), (67, 11))      # a cone from the rose, clear of a bud or a flower
+GARDEN_DROPS = {1: ((62, 12), (63, 16), (62, 20)), 2: ((62, 11), (63, 14), (61, 17)),
+                3: GARDEN_SPRAY, 4: GARDEN_SPRAY}
+
+
+def garden_water(c, stage):
+    """Watering: the plant at its stage, the can tipped over it on his raised right hand and
+    three drops falling from the rose onto the plant."""
+    garden_plant(c, stage)
+    stamp(c, GARDEN_CAN, *GARDEN_CAN_XY, GARDEN_CAN_COLORS)
+    for x, y in GARDEN_DROPS[stage]:
+        stamp(c, GARDEN_DROP, x, y, {'s': SKY, 'S': SAPPHIRE})
+
+
+def garden_sparkles(c):
+    """Two sparkles about the flower, for his pride in it."""
+    sparkle(c, 67, 11, YELLOW)
+    sparkle(c, 57, 9, PINK)
+
+
+# --- lantern: the night shift
+
+EYES['lantern_drowsy'] = (0, 4, ('####', '####', '.##.'), False)   # a flat lid half down a round eye
+MOUTHS['lantern_yawn'] = ('.##.', '#..#', '.##.')                     # a small yawn
+LANTERN_1 = Pose(arms=(REST, HOLD), eyes='lantern_drowsy', look=(2, 0), mouth='lantern_yawn')
+LANTERN_2 = Pose(arms=(REST, HOLD), eyes='blink', look=(2, 0))
+LANTERN_XY = (57, 21)             # the lantern's top-left (9 wide), its bail on the tip of his right hand
+LANTERN_RED = rgb('#e64553')
+LANTERN_GLOW = mix(YELLOW, rgb('#ffb02e'), .6)   # warmer than the glass, so the halo reads as light
+LANTERN_METAL = {'M': mix(LANTERN_RED, WHITE, .3), 'm': LANTERN_RED, 'n': mix(LANTERN_RED, BASE, .45)}
+LANTERN = ('...nnn...',
+           '..n...n..',
+           '..MMMMm..',
+           '.MMmmmmn.',
+           'MMmmmmmmn',
+           '.n.....n.',
+           '.n.....n.',
+           '.n.....n.',
+           '.n.....n.',
+           '.n.....n.',
+           'MMmmmmmmn',
+           '.nnnnnnn.')
+
+
+def lantern(c, lit):
+    """A red lantern hanging from his right hand: its glass bright yellow round a white flame,
+    a warm halo about it (lit), or dim, the flame an orange stub and the halo small (low)."""
+    x, y = LANTERN_XY
+    glass = rect(x + 2, y + 5, x + 6, y + 9)
+    cx, cy = x + 4.5, y + 7.5
+    if lit:
+        for r, a in ((7.5, 30), (6.5, 42), (5, 60)):      # r 7.5 ends on column 68, inside the frame
+            c.fill(ellipse(cx, cy, r, r - .5), fade(LANTERN_GLOW, a))
+        c.fill(glass, YELLOW)
+        stamp(c, ('.w.', 'wWw', 'wWw'), x + 3, y + 6, {'w': mix(YELLOW, WHITE, .6), 'W': WHITE})
+    else:
+        c.fill(ellipse(cx, cy, 5, 4.5), fade(LANTERN_GLOW, 40))
+        c.fill(glass, mix(YELLOW, BASE, .5))
+        stamp(c, ('.o.', 'oOo'), x + 3, y + 8, {'o': mix(PEACH, BASE, .2), 'O': PEACH})
+    stamp(c, LANTERN, x, y, LANTERN_METAL)
+
+
+# --- lunch: a sandwich at noon
+
+MOUTHS['lunch_grin'] = ('####', '.##.')       # open, eager
+MOUTHS['lunch_munch'] = ('#..#', '.##.')      # closed, chewing
+LUNCH_1 = Pose(arms=(REST, HOLD), eyes='wide', look=(2, -1), mouth='lunch_grin')
+LUNCH_2 = Pose(arms=(REST, HOLD), eyes='happy', look=(1, 0), blush=True, mouth='lunch_munch')
+LUNCH_XY = (53, 9)                # the sandwich's top-left (15 wide, 8 high), on his right hand
+LUNCH = ('..CCCCCCCCCCC..',
+         '.CBBBBBBBBBBBC.',
+         '.cBBBBBBBBBBBc.',
+         'gGLGGLGGLGGLGGg',
+         '.TTgTTTgTTTgTT.',
+         '.TTTTTTTTTTTTt.',
+         '.cBBBBBBBBBBBc.',
+         '..ccccccccccc..')
+LUNCH_RED = rgb('#e64553')
+LUNCH_COLORS = {'C': mix(PEACH, rgb('#c97b3f'), .35), 'c': mix(PEACH, rgb('#a65f2d'), .5),
+                'B': mix(YELLOW, WHITE, .35), 'L': mix(GREEN, WHITE, .35), 'G': GREEN,
+                'g': mix(GREEN, BASE, .25), 'T': LUNCH_RED, 't': mix(LUNCH_RED, BASE, .3)}
+
+
+def lunch(c, bitten):
+    """A sandwich on his right hand: two thick slices of bread, frilly lettuce, red tomato.
+    Bitten: a round C-shaped bite gone from its right end through every layer, the bread
+    on the bite's rim lighter (the cut face), crumbs falling."""
+    x, y = LUNCH_XY
+    stamp(c, LUNCH, x, y, LUNCH_COLORS)
+    if bitten:
+        bite = disc(x + 16.2, y + 4, 4.2)
+        c.erase(bite)
+        bread = {(x + i, y + j) for j, row in enumerate(LUNCH) for i, ch in enumerate(row) if ch == 'B'}
+        c.fill(around(bite) & bread, mix(YELLOW, WHITE, .7))
+        stamp(c, ('CC', 'cc'), x + 13, y + 9, LUNCH_COLORS)
+        stamp(c, ('BB',), x + 11, y + 12, LUNCH_COLORS)
+        stamp(c, ('C', 'c'), x + 14, y + 14, LUNCH_COLORS)
+
+
+# --- term: a shell running in the background
+
+TERM_LOOK = Pose(look=(2, -1))
+TERM_BOX = (56, 2, 68, 16)        # the window: left, top, right, bottom
+
+
+def term_window(c, step):
+    """A tiny terminal window at his right: a light border, a title bar with three dots, a
+    green prompt and a command, a line of output, then the cursor (step 1) or a second line of
+    output, the cursor off (step 2)."""
+    x0, y0, x1, y1 = TERM_BOX
+    c.fill(rounded(x0, y0, x1, y1, (1,)), SUBTEXT)
+    c.fill(rect(x0 + 1, y0 + 1, x1 - 1, y0 + 3), SURFACE2)
+    c.fill(rect(x0 + 1, y0 + 4, x1 - 1, y1 - 1), BASE)
+    for i, col in enumerate((RED, YELLOW, GREEN)):
+        c.put(x0 + 2 + 2 * i, y0 + 2, col)
+    stamp(c, ('#..', '.#.', '#..'), x0 + 2, y0 + 5, {'#': GREEN})
+    c.fill(rect(x0 + 6, y0 + 6, x0 + 10, y0 + 6), SKY)
+    c.fill(rect(x0 + 2, y0 + 9, x0 + 10, y0 + 9), SUBTEXT)
+    if step == 1:
+        c.fill(rect(x0 + 2, y0 + 11, x0 + 3, y0 + 12), TEXT)     # a dark row under it, clear of the border
+    else:
+        c.fill(rect(x0 + 2, y0 + 12, x0 + 7, y0 + 12), SUBTEXT)
+# <<< skits time
+
+
 # ------------------------------------------------------------------------------- frames
 
 def solo(pose, *front):
@@ -1315,6 +2207,73 @@ FRAMES = {
     'ask2': lambda: scene(WAVE_2, lambda c: speech(c, 1)),
     'work1': lambda: scene(IDLE, lambda c: gears(c, 0)),
     'work2': lambda: scene(BLINK, lambda c: gears(c, 1 / 8)),
+    # >>> skits control: frames
+    'tally0': lambda: solo(TALLY_0, lambda c: tally_paddle(c, TALLY_0)),
+    'tally1': lambda: solo(TALLY_N, lambda c: tally_paddle(c, TALLY_N, '1')),
+    'tally2': lambda: solo(TALLY_N, lambda c: tally_paddle(c, TALLY_N, '2')),
+    'tally3': lambda: solo(TALLY_N, lambda c: tally_paddle(c, TALLY_N, '3')),
+    'tally4': lambda: solo(TALLY_N, lambda c: tally_paddle(c, TALLY_N, '4')),
+    'tally5': lambda: solo(TALLY_N, lambda c: tally_paddle(c, TALLY_N, '5')),
+    'tally6': lambda: solo(TALLY_N, lambda c: tally_paddle(c, TALLY_N, '6')),
+    'tally7': lambda: solo(TALLY_N, lambda c: tally_paddle(c, TALLY_N, '7')),
+    'tally8': lambda: solo(TALLY_N, lambda c: tally_paddle(c, TALLY_N, '8')),
+    'tally9': lambda: solo(TALLY_N, lambda c: tally_paddle(c, TALLY_N, '9')),
+    'tallyMany': lambda: solo(TALLY_N, lambda c: tally_paddle(c, TALLY_N, '9+')),
+    'radar1': lambda: solo(RADAR_WATCH, lambda c: radar(c, 0)),
+    'radar2': lambda: solo(RADAR_WATCH, lambda c: radar(c, 1)),
+    'radar3': lambda: solo(RADAR_WATCH, lambda c: radar(c, 2)),
+    'radar4': lambda: solo(RADAR_CONTENT, lambda c: radar(c, 3)),
+    'radio1': lambda: solo(RADIO_LISTEN, lambda c: radio_headset(c, RADIO_LISTEN, hear=True)),
+    'radio2': lambda: solo(RADIO_TALK, lambda c: radio_headset(c, RADIO_TALK, RED, talk=True)),
+    'radio3': lambda: solo(RADIO_COPY, lambda c: radio_headset(c, RADIO_COPY, GREEN, check=True)),
+    # <<< skits control
+    # >>> skits helpers: frames
+    'report1': lambda: solo(LOOK_R, lambda c: report(c, LOOK_R, 1)),
+    'report2': lambda: solo(REPORT_TAKE, lambda c: report(c, REPORT_TAKE, 2)),
+    'report3': lambda: solo(REPORT_READ, lambda c: report(c, REPORT_READ, 3)),
+    'report4': lambda: solo(REPORT_GLAD, lambda c: report(c, REPORT_GLAD, 4)),
+    'launch1': lambda: solo(LOOK_R, lambda c: launch(c, 1)),
+    'launch2': lambda: solo(LAUNCH_WOW, lambda c: launch(c, 2)),
+    'launch3': lambda: solo(LAUNCH_BYE, lambda c: launch(c, 3)),
+    'perch1': lambda: solo(PERCH_1, lambda c: perch(c, PERCH_1, 0)),
+    'perch2': lambda: solo(PERCH_2, lambda c: perch(c, PERCH_2, 3)),
+    'conduct1': lambda: solo(CONDUCT_1, lambda c: conduct(c, CONDUCT_1, 1)),
+    'conduct2': lambda: solo(CONDUCT_2, lambda c: conduct(c, CONDUCT_2, 2)),
+    'conduct3': lambda: solo(CONDUCT_3, lambda c: conduct(c, CONDUCT_3, 3)),
+    # <<< skits helpers
+    # >>> skits gags: frames
+    'juggle1': lambda: solo(JUGGLE_1, lambda c: (juggle_tongue(c, JUGGLE_1), juggle_balls(c, 0))),
+    'juggle2': lambda: solo(JUGGLE_2, lambda c: (juggle_tongue(c, JUGGLE_2), juggle_balls(c, 1))),
+    'juggle3': lambda: solo(JUGGLE_3, lambda c: (juggle_tongue(c, JUGGLE_3), juggle_balls(c, 2))),
+    'gum1': lambda: solo(GUM_1, lambda c: gum_bubble(c, GUM_1, 2.6)),
+    'gum2': lambda: solo(GUM_2, lambda c: gum_bubble(c, GUM_2, 7.5)),
+    'gum3': lambda: solo(GUM_3, lambda c: gum_pop(c, GUM_3)),
+    'popcorn1': lambda: solo(POPCORN_1, lambda c: (popcorn_bucket(c, POPCORN_1), popcorn_dropped(c), popcorn_kernel(c, POPCORN_1))),
+    'popcorn2': lambda: solo(POPCORN_2, lambda c: (popcorn_bucket(c, POPCORN_2), popcorn_dropped(c))),
+    'plane1': lambda: solo(PLANE_1, lambda c: plane_held(c, PLANE_1)),
+    'plane2': lambda: solo(PLANE_2, lambda c: (plane_paper(c, 69, 0, -32), plane_speed(c, ((46, 5, 49, 3), (49, 7, 52, 5))))),
+    'plane3': lambda: solo(PLANE_3, lambda c: sparkle(c, 66, 2, YELLOW)),
+    'plane4': lambda: solo(PLANE_4, lambda c: (plane_paper(c, 11, 10, 0), plane_speed(c, ((0, 4, 3, 4), (0, 17, 3, 17))), plane_alarm(c, 58, 0))),
+    'plane5': lambda: solo(PLANE_5, lambda c: plane_bonk(c, PLANE_5)),
+    'zen1': lambda: solo(ZEN_1, lambda c: zen_twinkle(c, 7, 5)),
+    'zen2': lambda: solo(ZEN_2, lambda c: zen_twinkle(c, 62, 4)),
+    # <<< skits gags
+    # >>> skits time: frames
+    'plant1': lambda: solo(GARDEN_LOOK, lambda c: garden_plant(c, 1)),
+    'plant2': lambda: solo(GARDEN_LOOK, lambda c: garden_plant(c, 2)),
+    'plant3': lambda: solo(GARDEN_LOOK, lambda c: garden_plant(c, 3)),
+    'plant4': lambda: solo(GARDEN_PROUD, lambda c: (garden_plant(c, 4), garden_sparkles(c))),
+    'water1': lambda: solo(GARDEN_WATER, lambda c: garden_water(c, 1)),
+    'water2': lambda: solo(GARDEN_WATER, lambda c: garden_water(c, 2)),
+    'water3': lambda: solo(GARDEN_WATER, lambda c: garden_water(c, 3)),
+    'water4': lambda: solo(GARDEN_WATER, lambda c: garden_water(c, 4)),
+    'lantern1': lambda: solo(LANTERN_1, lambda c: lantern(c, True)),
+    'lantern2': lambda: solo(LANTERN_2, lambda c: lantern(c, False)),
+    'lunch1': lambda: solo(LUNCH_1, lambda c: lunch(c, False)),
+    'lunch2': lambda: solo(LUNCH_2, lambda c: lunch(c, True)),
+    'term1': lambda: solo(TERM_LOOK, lambda c: term_window(c, 1)),
+    'term2': lambda: solo(TERM_LOOK, lambda c: term_window(c, 2)),
+    # <<< skits time
 }
 
 # the loops the mod plays, for loops.png
@@ -1335,6 +2294,26 @@ LOOPS = (
     ('skill', ('skill1', 'skill2')), ('plug', ('plug1', 'plug2')),
     ('team 1', ('team1a', 'team1b')), ('team 2', ('team2a', 'team2b')), ('team 3', ('team3a', 'team3b')),
     ('ask', ('ask1', 'ask2')), ('work', ('work1', 'work2')),
+    # >>> skits control: loops
+    ('tally', ('tally0', 'tally3', 'tallyMany', 'tally0')),
+    ('radar', ('radar1', 'radar2', 'radar3', 'radar4')),
+    ('radio', ('radio1', 'radio2', 'radio1', 'radio2', 'radio3')),
+    # <<< skits control
+    # >>> skits helpers: loops
+    ('report', ('report1', 'report2', 'report3', 'report4')),
+    ('launch', ('launch1', 'launch2', 'launch3')),
+    ('perch', ('perch1', 'perch2', 'perch1', 'perch2', 'perch1')),
+    ('conduct', ('conduct1', 'conduct2', 'conduct3', 'conduct2')),
+    # <<< skits helpers
+    # >>> skits gags: loops
+    ('juggle', ('juggle1', 'juggle2', 'juggle3')), ('gum', ('gum1', 'gum2', 'gum3')),
+    ('popcorn', ('popcorn1', 'popcorn2')), ('plane', ('plane1', 'plane2', 'plane3', 'plane4', 'plane5')),
+    ('zen', ('zen1', 'zen2')),
+    # <<< skits gags
+    # >>> skits time: loops
+    ('garden', ('water1', 'plant1', 'water2', 'plant2', 'water3', 'plant3', 'water4', 'plant4')),
+    ('lantern', ('lantern1', 'lantern2')), ('lunch', ('lunch1', 'lunch2')), ('term', ('term1', 'term2')),
+    # <<< skits time
 )
 
 

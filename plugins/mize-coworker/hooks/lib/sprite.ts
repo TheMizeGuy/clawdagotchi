@@ -1,8 +1,8 @@
-// Claude's frames: the 73 picture frames by name (scripts/frames.json, mirrored
-// here), the twelve braille poses that stand in for them where no picture can
-// be drawn, the frame loop of each activity, the scene each spinner word and
-// mode puts beside the spinner, the blink, and the view and row pieces the
-// render hooks draw. Pure: no `$`.
+// Claude's frames: the 132 picture frames by name (scripts/frames.json,
+// mirrored here), the twelve braille poses that stand in for them where no
+// picture can be drawn, the frame loop of each activity, the scene each
+// spinner word and mode puts beside the spinner, the blink, and the view and
+// row pieces the render hooks draw. Pure: no `$`.
 
 import type { CoworkerActivity, CoworkerView } from '../../types'
 import { WORDS } from './activity'
@@ -94,7 +94,9 @@ export const BRAILLE: Readonly<Record<Pose, string>> = composeAll()
 
 /**
  * The solo frames: Claude alone, 8 cells by 2 rows (4 by 1 with `big` off),
- * drawn anywhere. Each names the braille pose that stands in for it.
+ * drawn anywhere. Each names the braille pose that stands in for it. From
+ * tally0 on (0.6.0) they are the skits of a Claude minding background agents,
+ * and the peek at a background shell (term1, term2).
  */
 export const SOLO_FRAMES = {
   idle: 'idle',
@@ -132,6 +134,65 @@ export const SOLO_FRAMES = {
   sleepCold1: 'sleep',
   sleepCold2: 'sleep',
   blinkHalf: 'blink',
+  tally0: 'idle',
+  tally1: 'wave',
+  tally2: 'wave',
+  tally3: 'wave',
+  tally4: 'wave',
+  tally5: 'wave',
+  tally6: 'wave',
+  tally7: 'wave',
+  tally8: 'wave',
+  tally9: 'wave',
+  tallyMany: 'wave',
+  radar1: 'lookR',
+  radar2: 'lookR',
+  radar3: 'lookR',
+  radar4: 'blink',
+  radio1: 'idle',
+  radio2: 'lookL',
+  radio3: 'blink',
+  report1: 'lookR',
+  report2: 'lookR',
+  report3: 'focus',
+  report4: 'blink',
+  launch1: 'lookR',
+  launch2: 'lookR',
+  launch3: 'idle',
+  perch1: 'idle',
+  perch2: 'blink',
+  conduct1: 'wave',
+  conduct2: 'idle',
+  conduct3: 'wave',
+  juggle1: 'idle',
+  juggle2: 'wave',
+  juggle3: 'idle',
+  gum1: 'idle',
+  gum2: 'idle',
+  gum3: 'flinch',
+  popcorn1: 'lookL',
+  popcorn2: 'blink',
+  plane1: 'lookR',
+  plane2: 'wave',
+  plane3: 'lookR',
+  plane4: 'lookL',
+  plane5: 'flinch',
+  zen1: 'blink',
+  zen2: 'blink',
+  plant1: 'lookR',
+  plant2: 'lookR',
+  plant3: 'lookR',
+  plant4: 'blink',
+  water1: 'lookR',
+  water2: 'lookR',
+  water3: 'lookR',
+  water4: 'lookR',
+  lantern1: 'idle',
+  lantern2: 'blink',
+  lunch1: 'idle',
+  lunch2: 'blink',
+  term1: 'lookR',
+  term2: 'lookR',
 } as const satisfies Record<string, Pose>
 
 export type SoloFrame = keyof typeof SOLO_FRAMES
@@ -139,7 +200,9 @@ export type SoloFrame = keyof typeof SOLO_FRAMES
 /**
  * The scene frames: Claude at the left exactly as in his solo frame, a prop
  * at the right, 12 cells by 2 rows, drawn only beside the spinner. Each names
- * the solo frame the footer (and `scenes` off) shows in its place.
+ * the solo frame it is built on, which is what is drawn in its place wherever
+ * a scene cannot be (the footer, `scenes` off), the team scenes excepted:
+ * footerOf.
  */
 export const SCENE_FRAMES = {
   think1: 'lookUp',
@@ -208,6 +271,25 @@ export function soloOf(frame: FrameName): SoloFrame {
   return isScene(frame) ? SCENE_FRAMES[frame] : frame
 }
 
+/**
+ * The stand-ins where a scene's own solo frame would not do without its
+ * prop: the team scenes are built on the hop (Claude bobbing with his
+ * helpers), and with no helpers beside him (on the status row, or beside the
+ * spinner with `scenes` off) that loop was a hop every half second for as
+ * long as the work ran. There he looks toward where the helpers would be
+ * instead.
+ */
+const FOOTER_FRAMES: ReadonlyMap<FrameName, SoloFrame> = new Map<FrameName, SoloFrame>([
+  ['team1a', 'lookR'],
+  ['team2a', 'lookR'],
+  ['team3a', 'lookR'],
+])
+
+/** The solo frame drawn for a frame wherever a scene cannot be (the footer, `scenes` off): its stand-in (FOOTER_FRAMES), else the frame's own solo frame. */
+export function footerOf(frame: FrameName): SoloFrame {
+  return FOOTER_FRAMES.get(frame) ?? soloOf(frame)
+}
+
 /** The braille pose that stands in for a frame. */
 export function poseOf(frame: FrameName): Pose {
   return SOLO_FRAMES[soloOf(frame)]
@@ -232,10 +314,11 @@ function times(frame: FrameName, count: number): FrameName[] {
  * The frame loop of each activity, one step per 250 ms tick. Delegating, done
  * and asleep have more than one form (TEAM_LOOPS, CHEER_LOOP, COLD_LOOP); the
  * forms below are the defaults. Beside the spinner a spinner word or mode
- * can put another scene in a step's place (sceneFor), step for step. Idle is
- * breathing (idle and idleUp every 2 s, BREATH_MS) and the blink (BLINK), not
- * a tick loop. Done plays once and holds its last frame (ONCE); every other
- * loop repeats.
+ * can put another scene in a step's place (sceneFor), step for step. Idle and
+ * supervising (at ease) are breathing (idle and idleUp every 2 s, BREATH_MS)
+ * and the blink (BLINK), not a tick loop; what he does between breaths is the
+ * wander's (./wander). Done plays once and holds its last frame (ONCE); every
+ * other loop repeats.
  */
 export const LOOPS: Readonly<Record<CoworkerActivity, readonly FrameName[]>> = {
   thinking: [...times('think1', 2), ...times('think2', 2), ...times('think3', 4)],
@@ -251,6 +334,7 @@ export const LOOPS: Readonly<Record<CoworkerActivity, readonly FrameName[]>> = {
   greeting: [...times('wave1', 2), ...times('wave2', 2), ...times('wave1', 2), ...times('wave2', 2)],
   done: ['hop1', 'hop2', 'hop3', 'idle'],
   oops: ['flinch'],
+  supervising: ['idle', 'idleUp'],
   idle: ['idle', 'idleUp'],
   asleep: ['sleep1', 'sleep2', 'sleep3'],
 }
@@ -359,8 +443,17 @@ export const CAPTIONS: Readonly<Record<CoworkerActivity, string>> = {
   greeting: 'hi',
   done: 'done',
   oops: 'oops',
+  // supervising says how many agents are at work (agentsCaption), set by the frame's context
+  supervising: '',
   idle: '',
   asleep: '',
+}
+
+/** The caption while he minds background agents: how many are at work, `9+` past nine. At most 9 cells. */
+export function agentsCaption(count: number): string {
+  const whole = Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1
+
+  return whole === 1 ? '1 agent' : `${whole > 9 ? '9+' : whole} agents`
 }
 
 /** One animation step. */
@@ -424,10 +517,11 @@ export function boxOf(frame: FrameName, size: Size): { columns: number; rows: nu
 
 /**
  * The frame drawn beside the spinner: the scene itself where scenes may be
- * drawn (the `scenes` option, and `big`: a scene needs two rows), else its solo frame.
+ * drawn (the `scenes` option, and `big`: a scene needs two rows), else the
+ * solo frame that stands in for it (footerOf: never the team scenes' bare hop).
  */
 export function spinnerFrame(frame: FrameName, isScenes: boolean, size: Size): FrameName {
-  return isScenes && size === 'big' ? frame : soloOf(frame)
+  return isScenes && size === 'big' ? frame : footerOf(frame)
 }
 
 /**
@@ -450,19 +544,29 @@ export const RESERVE = {
   small: { full: 18, compact: 9, compactBelow: 110 },
 } as const
 
-/** True for the activities that animate on the tick (all but idle and asleep). */
+/**
+ * True while Claude is at ease: idle, or minding background agents with the
+ * main loop at rest. At ease he breathes, blinks and makes his moves (the
+ * wander); no tick loop runs.
+ */
+export function isAtEase(activity: CoworkerActivity): boolean {
+  return activity === 'idle' || activity === 'supervising'
+}
+
+/** True for the activities that animate on the tick (all but the at-ease ones and asleep). */
 export function isBusy(activity: CoworkerActivity): boolean {
-  return activity !== 'idle' && activity !== 'asleep'
+  return !isAtEase(activity) && activity !== 'asleep'
 }
 
 /**
  * What else picks a frame: reduced motion (`isAnimated` false holds each
- * loop's first frame), the idle blink (`isBlinking` shut, `isBlinkHalf` half
- * shut) and breath, how many delegating calls are in flight, whether a
- * finished turn was long enough for a cheer, and whether the prompt cache has
- * gone cold.
+ * loop's first frame), the at-ease blink (`isBlinking` shut, `isBlinkHalf`
+ * half shut) and breath, how many delegating calls are in flight, whether a
+ * finished turn was long enough for a cheer, whether the prompt cache has
+ * gone cold, and how many agents he minds (the supervising caption).
  */
 export type FrameContext = {
+  agents?: number
   isAnimated?: boolean
   isBlinking?: boolean
   isBlinkHalf?: boolean
@@ -489,11 +593,11 @@ export function loopOf(activity: CoworkerActivity, context: FrameContext = {}): 
   return LOOPS[activity]
 }
 
-/** The frame of an activity at a step of its loop (idle: the blink, shut or half shut, else the breath). */
+/** The frame of an activity at a step of its loop (at ease: the blink, shut or half shut, else the breath). */
 export function frameAt(activity: CoworkerActivity, step: number, context: FrameContext = {}): FrameName {
   const isAnimated = context.isAnimated !== false
 
-  if (activity === 'idle') {
+  if (isAtEase(activity)) {
     if (!isAnimated) {
       return 'idle'
     }
@@ -516,14 +620,23 @@ export function viewOfFrame(frame: FrameName, caption = '', isAsleep = false): F
   return { frame, sprite: brailleOf(frame), caption, isAsleep }
 }
 
-/** What the render hooks draw for an activity at a step of its loop. */
-export function viewOf(activity: CoworkerActivity, step: number, context: FrameContext = {}): FrameView {
-  return viewOfFrame(frameAt(activity, step, context), CAPTIONS[activity], activity === 'asleep')
+/** The caption of an activity in a context: the activity's own, or while supervising how many agents he minds. */
+export function captionOf(activity: CoworkerActivity, context: FrameContext = {}): string {
+  return activity === 'supervising' ? agentsCaption(context.agents ?? 1) : CAPTIONS[activity]
 }
 
-/** An idle Claude in the middle of a move (a stroll, a yawn, a sip): that frame, no caption. */
-export function movingView(frame: FrameName): FrameView {
-  return viewOfFrame(frame)
+/** What the render hooks draw for an activity at a step of its loop. */
+export function viewOf(activity: CoworkerActivity, step: number, context: FrameContext = {}): FrameView {
+  return viewOfFrame(frameAt(activity, step, context), captionOf(activity, context), activity === 'asleep')
+}
+
+/**
+ * A Claude at ease in the middle of a move (a stroll, a yawn, a skit): that
+ * frame, with the caption his activity has (none idle; the agents' count
+ * while supervising, so it does not come and go with every move).
+ */
+export function movingView(frame: FrameName, caption = ''): FrameView {
+  return viewOfFrame(frame, caption)
 }
 
 /**
@@ -585,25 +698,13 @@ export function pieceCells(piece: Piece, isPicture = false, size: Size = 'small'
  * cells; 1 for `big`), a caption shortens the walk, the ` · ` before a
  * caption becomes a space where it would not fit, and the ` z` becomes `z`
  * where only one cell is left (`big` in a narrow terminal). Claude's text is
- * the braille of the view's frame (the solo frame's pose for a scene).
+ * the braille of the view's frame (the footer's solo frame for a scene).
  */
 export function footerPieces(modes: readonly string[], view: CoworkerView, options: FooterOptions = {}): Piece[] {
-  const isCompact = options.isCompact === true
-  const size = options.size ?? 'small'
   const labels = modes.join(' & ')
-  const reserve = isCompact ? RESERVE[size].compact : RESERVE[size].full
   const claude: Piece = { text: view.sprite, tone: view.isAsleep ? 'sleeping' : 'claude' }
-  const claudeCells = pieceCells(claude, options.isPicture === true, size)
-  const caption = isCompact ? '' : view.caption
-  let lead = caption === '' ? ' ' : `${labels === '' ? ' ' : ' · '}${caption} `
-
-  if ([...lead].length + claudeCells > reserve) {
-    lead = ` ${caption} `
-  }
-
-  // the spare stays free (see RESERVE)
-  const room = reserve - 1 - [...lead].length - claudeCells
-  const x = clampX(options.x ?? 0, isCompact ? WANDER_RANGE[size].compact : WANDER_RANGE[size].full, room)
+  const { lead, room, range } = footerLayout(modes, view, options)
+  const x = clampX(options.x ?? 0, range)
   const pieces: Piece[] = []
 
   if (labels !== '') {
@@ -625,6 +726,40 @@ export function footerPieces(modes: readonly string[], view: CoworkerView, optio
   }
 
   return pieces
+}
+
+/**
+ * The footer row's measures for a view: the lead before Claude (a space, or
+ * the caption between its separators), the blank cells left right of him
+ * with the spare kept free (`room`), and how far he may stand from the right
+ * end there (`range`: the size's wander range, short of the room).
+ */
+function footerLayout(modes: readonly string[], view: CoworkerView, options: FooterOptions): { lead: string; room: number; range: number } {
+  const isCompact = options.isCompact === true
+  const size = options.size ?? 'small'
+  const labels = modes.join(' & ')
+  const reserve = isCompact ? RESERVE[size].compact : RESERVE[size].full
+  const claudeCells = pieceCells({ text: view.sprite, tone: 'claude' }, options.isPicture === true, size)
+  const caption = isCompact ? '' : view.caption
+  let lead = caption === '' ? ' ' : `${labels === '' ? ' ' : ' · '}${caption} `
+
+  if ([...lead].length + claudeCells > reserve) {
+    lead = ` ${caption} `
+  }
+
+  // the spare stays free (see RESERVE)
+  const room = reserve - 1 - [...lead].length - claudeCells
+
+  return { lead, room, range: Math.max(0, Math.min(isCompact ? WANDER_RANGE[size].compact : WANDER_RANGE[size].full, room)) }
+}
+
+/**
+ * How far Claude may walk on the footer row as it is drawn for a view: with
+ * no caption wanderRoom's answer, with one (`3 agents` while he minds them)
+ * only what it leaves, so a stroll never steps where the row cannot show it.
+ */
+export function footerRange(modes: readonly string[], view: CoworkerView, options: FooterOptions = {}): number {
+  return footerLayout(modes, view, options).range
 }
 
 /**

@@ -1,5 +1,5 @@
 {
-  "comment": "Every picture frame of Claude (0.5.0 adds blinkHalf, write, webSearch, skill and plug): its name, its kind (solo: 70x40 logical pixels, a box of 8 cells by 2 rows; scene: 105x40, 12 cells by 2 rows, drawn only beside the spinner), the solo frame the footer shows in a scene's place, and the braille pose that stands in where the terminal has no graphics. scripts/make-frames.py draws one PNG per entry; hooks/lib/sprite.ts mirrors this table and a test holds the two together.",
+  "comment": "Every picture frame of Claude (0.5.0 adds blinkHalf, write, webSearch, skill and plug; 0.6.0 the 59 solo frames from tally0 on, the skits of a Claude minding background agents and the peek at a background shell): its name, its kind (solo: 70x40 logical pixels, a box of 8 cells by 2 rows; scene: 105x40, 12 cells by 2 rows, drawn only beside the spinner), the solo frame a scene is built on (drawn in its place wherever a scene cannot be, the team scenes excepted: sprite.ts footerOf), and the braille pose that stands in where the terminal has no graphics. scripts/make-frames.py draws one PNG per entry; hooks/lib/sprite.ts mirrors this table and a test holds the two together.",
   "scale": 4,
   "solo": {
     "width": 70,
@@ -451,6 +451,360 @@
       "kind": "scene",
       "solo": "idle",
       "what": "the plug in the socket, a small yellow spark at the join"
+    },
+    {
+      "name": "tally0",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "the score paddle hanging from his right hand at his side, its plain pale blue back to us; his eyes glance down and right at it"
+    },
+    {
+      "name": "tally1",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "his right arm up, the score paddle beside his head: a bold dark 1 on a light card in a blue rim; happy eyes, a blush"
+    },
+    {
+      "name": "tally2",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "his right arm up, the score paddle beside his head: a bold dark 2 on a light card in a blue rim; happy eyes, a blush"
+    },
+    {
+      "name": "tally3",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "his right arm up, the score paddle beside his head: a bold dark 3 on a light card in a blue rim; happy eyes, a blush"
+    },
+    {
+      "name": "tally4",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "his right arm up, the score paddle beside his head: a bold dark 4 on a light card in a blue rim; happy eyes, a blush"
+    },
+    {
+      "name": "tally5",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "his right arm up, the score paddle beside his head: a bold dark 5 on a light card in a blue rim; happy eyes, a blush"
+    },
+    {
+      "name": "tally6",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "his right arm up, the score paddle beside his head: a bold dark 6 on a light card in a blue rim; happy eyes, a blush"
+    },
+    {
+      "name": "tally7",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "his right arm up, the score paddle beside his head: a bold dark 7 on a light card in a blue rim; happy eyes, a blush"
+    },
+    {
+      "name": "tally8",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "his right arm up, the score paddle beside his head: a bold dark 8 on a light card in a blue rim; happy eyes, a blush"
+    },
+    {
+      "name": "tally9",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "his right arm up, the score paddle beside his head: a bold dark 9 on a light card in a blue rim; happy eyes, a blush"
+    },
+    {
+      "name": "tallyMany",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "his right arm up, the score paddle beside his head showing 9+ in bold dark digits; happy eyes, a blush"
+    },
+    {
+      "name": "radar1",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "eyes right on a small round radar scope on a short stand at his right (his right arm behind it): dark green screen, lighter rim, the bright sweep pointing up, the quarter it just swept glowing, the blip there flaring"
+    },
+    {
+      "name": "radar2",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "the radar sweep a quarter turn on, pointing right, the next blip flaring and the last one fading"
+    },
+    {
+      "name": "radar3",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "the radar sweep pointing down, the third blip flaring"
+    },
+    {
+      "name": "radar4",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "the radar sweep pointing left over a quiet quarter, the blips dimmed; his eyes happy, content"
+    },
+    {
+      "name": "radio1",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "a lavender headset on (a band over his head, an ear cup at our left with its lamp off, a mic boom to the corner of his mouth), sound arcs coming in by the cup; eyes up and to the left, listening"
+    },
+    {
+      "name": "radio2",
+      "kind": "solo",
+      "braille": "lookL",
+      "what": "talking into the headset mic at the corner of his mouth: a small open mouth, two bold sound arcs going out beside it, the ear cup lamp lit red"
+    },
+    {
+      "name": "radio3",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "copy that: happy eyes and a blush, the ear cup lamp green and a green check beside it"
+    },
+    {
+      "name": "report1",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "a helper (a small Claude) coming in at the right edge, its arms up holding a white page over its head; he looks right"
+    },
+    {
+      "name": "report2",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "the helper hopping beside him, the page held up to his right hand as he reaches out for it"
+    },
+    {
+      "name": "report3",
+      "kind": "solo",
+      "braille": "focus",
+      "what": "he holds the page up by his face on a raised forearm and reads it, eyes focused on it; the helper stands watching at his lower right"
+    },
+    {
+      "name": "report4",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "a green check on the page and two yellow sparkles; he is pleased (happy eyes, blush), the helper hops on its toes, arms thrown up"
+    },
+    {
+      "name": "launch1",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "a small rocket (white body, red nose and fins, a blue porthole) standing on the floor at his right; he looks at it"
+    },
+    {
+      "name": "launch2",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "ignition: the rocket a few pixels up on a flame, smoke billowing at its base; his eyes wide, mouth open"
+    },
+    {
+      "name": "launch3",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "the rocket leaving through the top right on its flame over a plume of smoke; he looks up after it, happy"
+    },
+    {
+      "name": "perch1",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "a helper standing on his head, he a little lower and squashed under it, his eyes rolled up toward it"
+    },
+    {
+      "name": "perch2",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "the helper hopping on his head, two spring marks under it; his eyes squeezed shut, squashed a pixel more"
+    },
+    {
+      "name": "conduct1",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "conducting, eyes happy: a thin white baton raised up and out in his right hand; a sky and a pink music note at the upper left"
+    },
+    {
+      "name": "conduct2",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "the baton swept down low, his mouth open in song; the notes a little higher and a new yellow one"
+    },
+    {
+      "name": "conduct3",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "the baton up and in toward his head; the notes higher still"
+    },
+    {
+      "name": "juggle1",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "juggling three balls (blue, green, yellow) in an arc over his head, a pale speed line behind the top one, the tip of his tongue out in concentration: his left hand up at a throw, the right low, eyes on the top ball"
+    },
+    {
+      "name": "juggle2",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "juggling: every ball one spot further round, his right hand up at a catch, the left low"
+    },
+    {
+      "name": "juggle3",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "juggling: the balls one spot further again, both hands halfway, leading back into juggle1"
+    },
+    {
+      "name": "gum1",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "chewing gum: a small pink bubble at his mouth, heavy-lidded eyes, unbothered"
+    },
+    {
+      "name": "gum2",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "a big pink bubble over his lower face, a white glint on it, eyes wide"
+    },
+    {
+      "name": "gum3",
+      "kind": "solo",
+      "braille": "flinch",
+      "what": "the bubble popped: a splat of pink gum stuck over his mouth, dripping off his chin, flecks on his head and above his brow, short white burst marks ringing the splat, eyes squeezed shut"
+    },
+    {
+      "name": "popcorn1",
+      "kind": "solo",
+      "braille": "lookL",
+      "what": "a red-and-white striped popcorn bucket at his right side, a dropped kernel on the floor, eyes to the upper left on the show, one kernel flying in from the bucket beside his open mouth"
+    },
+    {
+      "name": "popcorn2",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "munching popcorn: happy eyes, a small chewing mouth, blush, the kernel gone"
+    },
+    {
+      "name": "plane1",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "holding a white paper plane up at his right, looking at it"
+    },
+    {
+      "name": "plane2",
+      "kind": "solo",
+      "braille": "wave",
+      "what": "the throw: his right arm up, the plane leaving at the upper right with two short speed lines, happy eyes"
+    },
+    {
+      "name": "plane3",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "the plane gone: he watches the upper right corner, pleased, a tiny sparkle where it left"
+    },
+    {
+      "name": "plane4",
+      "kind": "solo",
+      "braille": "lookL",
+      "what": "the plane coming back in from the left edge at head height, his eyes wide, looking left, a small yellow exclamation mark"
+    },
+    {
+      "name": "plane5",
+      "kind": "solo",
+      "braille": "flinch",
+      "what": "bonk: the paper plane stuck nose-first in the top left of his head, eyes squeezed, two small stars"
+    },
+    {
+      "name": "zen1",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "meditating: eyes closed in calm curves, a small smile, floating with short legs, arms out to the sides, a small lavender twinkle at the upper left"
+    },
+    {
+      "name": "zen2",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "meditating, one pixel higher, the twinkle now at the upper right"
+    },
+    {
+      "name": "plant1",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "a small terracotta pot on the floor at his right with a sprout of two tiny leaves; he looks down at it"
+    },
+    {
+      "name": "plant2",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "the same pot, a taller stem with two proper leaves"
+    },
+    {
+      "name": "plant3",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "the plant taller still, a third leaf and a closed pink bud at the top"
+    },
+    {
+      "name": "plant4",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "the plant in flower, pink petals round a yellow center, a sparkle; happy eyes, blush"
+    },
+    {
+      "name": "water1",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "his right hand raised with a sky-blue watering can tipped over the sprout, three drops falling"
+    },
+    {
+      "name": "water2",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "watering the two-leaf plant, the can tipped over it, three drops falling"
+    },
+    {
+      "name": "water3",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "watering the budding plant, the can tipped over it, three drops falling"
+    },
+    {
+      "name": "water4",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "watering the flowering plant, the can tipped over it, three drops falling"
+    },
+    {
+      "name": "lantern1",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "holding a small red lantern at his right, lit, a warm yellow halo round it; eyes half-lidded, sleepy, a small yawn"
+    },
+    {
+      "name": "lantern2",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "the lantern flickered low, its halo smaller and dimmer; his eyes shut for a moment"
+    },
+    {
+      "name": "lunch1",
+      "kind": "solo",
+      "braille": "idle",
+      "what": "holding a sandwich at his right (bread, green lettuce, red tomato), wide eyes on it"
+    },
+    {
+      "name": "lunch2",
+      "kind": "solo",
+      "braille": "blink",
+      "what": "a round bite gone from the sandwich's right end, crumbs falling; happy eyes, blush, chewing"
+    },
+    {
+      "name": "term1",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "a tiny terminal window at his right (light border, title-bar dots, a green prompt, a cursor block); he glances at it"
+    },
+    {
+      "name": "term2",
+      "kind": "solo",
+      "braille": "lookR",
+      "what": "the same window, the cursor off and one more line of output"
     }
   ]
 }

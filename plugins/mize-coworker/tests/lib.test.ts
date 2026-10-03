@@ -4,7 +4,8 @@
 // tool -> activity, the safe spinner object (no Bash argument ever), the
 // activity model (the cheer, the team), the narration, the /coworker text,
 // the demo tour, the reserve sums and the default reserve, the wander and its
-// gated moves, and the vitals.
+// gated moves, the skits of a Claude minding background agents, and the
+// vitals.
 
 import { describe, expect, test } from 'claude-code/testing'
 
@@ -35,7 +36,26 @@ import {
   WORDS,
   type SpinnerMode,
 } from '../hooks/lib/activity'
-import { agentEnded, backgroundSeen, basename, greeted, isCheering, LONG_TURN_MS, MOMENT_MS, OOPS_EVERY_MS, teamSize, toolFailed } from '../hooks/lib/activity'
+import {
+  agentCount,
+  agentEnded,
+  agentsAtWork,
+  backgroundOf,
+  backgroundSeen,
+  basename,
+  greeted,
+  hasAgentSigns,
+  isCheering,
+  LONG_TURN_MS,
+  MOMENT_MS,
+  NO_BACKGROUND,
+  OOPS_EVERY_MS,
+  QUIET_MS,
+  SEEN_MS,
+  SOME_AGENT,
+  teamSize,
+  toolFailed,
+} from '../hooks/lib/activity'
 import { ACT_MS, DEMO_ACTS, demoActs, demoSteps, DEMO_WORDS } from '../hooks/lib/demo'
 import {
   addedCells,
@@ -47,14 +67,20 @@ import {
   BRAILLE,
   brailleOf,
   BREATH_MS,
+  agentsCaption,
+  captionOf,
   CAPTIONS,
   CHEER_LOOP,
   CLAUDE_COLOR,
   COLD_LOOP,
+  footerOf,
   footerPieces,
+  footerRange,
   frameAt,
   frameFile,
   FRAME_NAMES,
+  isAtEase,
+  isBusy,
   isFrameName,
   isScene,
   LOOPS,
@@ -109,7 +135,7 @@ test('no busy loop holds one frame, and no moment lasts, long enough for the foo
   const margin = 500
 
   for (const activity of Object.keys(LOOPS) as (keyof typeof LOOPS)[]) {
-    if (activity === 'idle' || activity === 'asleep') {
+    if (activity === 'idle' || activity === 'supervising' || activity === 'asleep') {
       continue
     }
 
@@ -135,10 +161,10 @@ test('no busy loop holds one frame, and no moment lasts, long enough for the foo
     expect(longestHold(swapped) * TICK_MS, mode).toBeLessThanOrEqual(SPINNER_FRESH_MS - margin)
   }
 
-  // and every idle move keeps its holds under the same bound (no move runs beside the spinner, but a
-  // hold that long would read as a stall)
-  for (const kind of ['stroll', 'look', 'hop', 'yawn', 'sip', 'sweat', 'clock', 'pumpkin'] as MoveKind[]) {
-    const frames = moveSteps(kind, 0, 12).map(step => step.frame)
+  // and every idle move and every skit keeps its holds under the same bound (no move runs beside
+  // the spinner, but a hold that long would read as a stall)
+  for (const kind of ALL_MOVES) {
+    const frames = moveSteps(kind, 0, 12, { count: 3, forMs: 0 }).map(step => step.frame)
 
     expect(longestHold(frames, true) * TICK_MS, kind).toBeLessThanOrEqual(SPINNER_FRESH_MS - margin)
   }
@@ -146,24 +172,42 @@ test('no busy loop holds one frame, and no moment lasts, long enough for the foo
 import { parseVitals, RESERVE_DEFAULT_FILE, reserveDefaultPath, reserveLine, reservePath, VITALS_FILE, vitalsPath } from '../hooks/lib/statusline-bus'
 import {
   chooseMove,
+  chooseSkit,
   clampX,
   DROWSY_MS,
+  GARDEN_STAGE_MS,
+  gardenStage,
   GATED_SHARE,
   gatedMoves,
+  isLunchHour,
+  isNightShift,
   isPumpkinTime,
+  LONG_WAIT_MS,
   moveSteps,
   nextFloat,
   nextInt,
   nextWait,
   seeded,
+  SKIT_EVERY_MS,
+  SKIT_SOON_MS,
+  skitWeights,
   STILL,
+  stillFrames,
   SWEAT_AT,
+  tallyFrame,
   WANDER_EVERY_MS,
   WANDER_RANGE,
   type GatedMove,
   type MoveKind,
+  type SkitContext,
 } from '../hooks/lib/wander'
 import type { CoworkerActivity } from '../types'
+
+/** The moves of an idle Claude: the everyday five and the gated ones. */
+const IDLE_MOVES: readonly MoveKind[] = ['stroll', 'look', 'hop', 'yawn', 'sip', 'sweat', 'clock', 'pumpkin', 'peek']
+/** The skits of a Claude minding background agents. */
+const SKITS: readonly MoveKind[] = ['tally', 'radar', 'radio', 'report', 'launch', 'perch', 'conduct', 'juggle', 'gum', 'popcorn', 'plane', 'zen', 'garden', 'lantern', 'lunch']
+const ALL_MOVES: readonly MoveKind[] = [...IDLE_MOVES, ...SKITS]
 
 const ACTIVITIES: readonly CoworkerActivity[] = [
   'thinking',
@@ -178,6 +222,7 @@ const ACTIVITIES: readonly CoworkerActivity[] = [
   'greeting',
   'done',
   'oops',
+  'supervising',
   'idle',
   'asleep',
 ]
@@ -243,16 +288,37 @@ describe('sprite', () => {
     expect(braille([])).toBe('')
   })
 
-  test('the frame table: 73 frames by name, 35 solo and 38 scenes, each scene naming a solo frame and each solo frame a pose', () => {
+  test('the frame table: 132 frames by name, 94 solo and 38 scenes, each scene naming a solo frame and each solo frame a pose', () => {
     // tests/test_frames.py holds this table equal to scripts/frames.json and checks every PNG
-    expect(FRAME_NAMES).toHaveLength(73)
-    expect(new Set(FRAME_NAMES).size).toBe(73)
-    expect(Object.keys(SOLO_FRAMES)).toHaveLength(35)
+    expect(FRAME_NAMES).toHaveLength(132)
+    expect(new Set(FRAME_NAMES).size).toBe(132)
+    expect(Object.keys(SOLO_FRAMES)).toHaveLength(94)
     expect(Object.keys(SCENE_FRAMES)).toHaveLength(38)
     expect(FRAME_NAMES.slice(0, 3)).toEqual(['idle', 'idleUp', 'blink'])
     expect(FRAME_NAMES.at(-1)).toBe('plug2')
     // 0.5.0's frames: the half-shut blink, the notepad, the globe under a magnifying glass, the scroll, the plug
-    expect(Object.keys(SOLO_FRAMES).at(-1)).toBe('blinkHalf')
+    expect(Object.keys(SOLO_FRAMES)[34]).toBe('blinkHalf')
+    // 0.6.0's frames, all solo: the skits of a Claude minding background agents, and the peek at a shell
+    expect(Object.keys(SOLO_FRAMES).slice(35)).toEqual([
+      'tally0', 'tally1', 'tally2', 'tally3', 'tally4', 'tally5', 'tally6', 'tally7', 'tally8', 'tally9', 'tallyMany',
+      'radar1', 'radar2', 'radar3', 'radar4',
+      'radio1', 'radio2', 'radio3',
+      'report1', 'report2', 'report3', 'report4',
+      'launch1', 'launch2', 'launch3',
+      'perch1', 'perch2',
+      'conduct1', 'conduct2', 'conduct3',
+      'juggle1', 'juggle2', 'juggle3',
+      'gum1', 'gum2', 'gum3',
+      'popcorn1', 'popcorn2',
+      'plane1', 'plane2', 'plane3', 'plane4', 'plane5',
+      'zen1', 'zen2',
+      'plant1', 'plant2', 'plant3', 'plant4',
+      'water1', 'water2', 'water3', 'water4',
+      'lantern1', 'lantern2',
+      'lunch1', 'lunch2',
+      'term1', 'term2',
+    ])
+    expect([poseOf('tally0'), poseOf('tally7'), poseOf('report3'), poseOf('gum3'), poseOf('zen1'), poseOf('term2')]).toEqual(['idle', 'wave', 'focus', 'flinch', 'blink', 'lookR'])
     expect(Object.keys(SCENE_FRAMES).slice(28)).toEqual(['write1', 'write2', 'write3', 'webSearch1', 'webSearch2', 'webSearch3', 'skill1', 'skill2', 'plug1', 'plug2'])
     expect([poseOf('blinkHalf'), soloOf('write1'), soloOf('webSearch1'), soloOf('skill1'), soloOf('plug1')]).toEqual(['blink', 'lookDown', 'lookR', 'lookDown', 'armsIn'])
 
@@ -276,8 +342,7 @@ describe('sprite', () => {
     expect(frameFile('/p/mize-coworker/', 'think2')).toBe('/p/mize-coworker/assets/frames/think2.png')
   })
 
-  test('every frame is drawn by something: a loop, a scene a spinner word or mode swaps in, a move, the breath, the blink, or as a scene\'s solo frame', () => {
-    const kinds: MoveKind[] = ['stroll', 'look', 'hop', 'yawn', 'sip', 'sweat', 'clock', 'pumpkin']
+  test('every frame is drawn by something: a loop, a scene a spinner word or mode swaps in, a move or a skit, the breath, the blink, or as a scene\'s solo frame', () => {
     const loops = [...Object.values(LOOPS), ...Object.values(TEAM_LOOPS)]
     const words = Object.values(DEMO_WORDS)
     const used = new Set<string>([
@@ -285,7 +350,10 @@ describe('sprite', () => {
       ...loops.flatMap(loop => MODES.flatMap(mode => words.flatMap(word => loop.map(frame => sceneFor(frame, word, mode))))),
       ...CHEER_LOOP,
       ...COLD_LOOP,
-      ...kinds.flatMap(kind => moveSteps(kind, 0, 2).map(step => step.frame)),
+      ...ALL_MOVES.flatMap(kind => moveSteps(kind, 0, 2).map(step => step.frame)),
+      // the tally at every count and the garden at every stage
+      ...Array.from({ length: 10 }, (_, i) => moveSteps('tally', 0, 0, { count: i + 1 })).flatMap(steps => steps.map(step => step.frame)),
+      ...[0, ...GARDEN_STAGE_MS].flatMap(forMs => moveSteps('garden', 0, 0, { forMs }).map(step => step.frame)),
       ...BLINK.map(phase => phase.frame),
       ...Object.values(SCENE_FRAMES),
     ])
@@ -308,6 +376,7 @@ describe('sprite', () => {
       greeting: ['wave1', 'wave1', 'wave2', 'wave2', 'wave1', 'wave1', 'wave2', 'wave2'],
       done: ['hop1', 'hop2', 'hop3', 'idle'],
       oops: ['flinch'],
+      supervising: ['idle', 'idleUp'],
       idle: ['idle', 'idleUp'],
       asleep: ['sleep1', 'sleep2', 'sleep3'],
     })
@@ -322,6 +391,14 @@ describe('sprite', () => {
     expect(CAPTIONS.asking).toBe('needs you')
     expect(CAPTIONS.idle).toBe('')
     expect(CAPTIONS.asleep).toBe('')
+    // supervising has no fixed caption: it says how many agents he minds
+    expect(CAPTIONS.supervising).toBe('')
+    expect([1, 2, 9, 10, 40, 0, NaN].map(count => agentsCaption(count))).toEqual(['1 agent', '2 agents', '9 agents', '9+ agents', '9+ agents', '1 agent', '1 agent'])
+    expect([captionOf('supervising', { agents: 4 }), captionOf('supervising'), captionOf('reading', { agents: 4 }), captionOf('idle', { agents: 4 })]).toEqual(['4 agents', '1 agent', 'reading', ''])
+    expect(viewOf('supervising', 0, { agents: 3 })).toEqual({ frame: 'idle', sprite: BRAILLE.idle, caption: '3 agents', isAsleep: false })
+    // a move under way keeps the caption his activity has
+    expect(movingView('juggle2', '3 agents')).toEqual({ frame: 'juggle2', sprite: BRAILLE.wave, caption: '3 agents', isAsleep: false })
+    expect(movingView('yawn1').caption).toBe('')
 
     // the step counter in register.tsx wraps at 480: a multiple of every loop's length
     for (const loop of [...Object.values(LOOPS), ...Object.values(TEAM_LOOPS), CHEER_LOOP, COLD_LOOP]) {
@@ -333,8 +410,40 @@ describe('sprite', () => {
       expect(LOOPS[activity].every(frame => isScene(frame)), activity).toBe(true)
     }
 
-    for (const activity of ['greeting', 'done', 'oops', 'idle', 'asleep'] as const) {
+    for (const activity of ['greeting', 'done', 'oops', 'supervising', 'idle', 'asleep'] as const) {
       expect(LOOPS[activity].some(frame => isScene(frame)), activity).toBe(false)
+    }
+
+    // at ease (idle, or minding background agents) he breathes and blinks and no tick loop runs; asleep is neither
+    expect(ACTIVITIES.filter(activity => isAtEase(activity))).toEqual(['supervising', 'idle'])
+    expect(ACTIVITIES.filter(activity => !isBusy(activity))).toEqual(['supervising', 'idle', 'asleep'])
+  })
+
+  test('minding agents he breathes and blinks as when idle: never a tick loop, never a hop', () => {
+    expect(Array.from({ length: 6 }, (_, step) => frameAt('supervising', step))).toEqual(['idle', 'idle', 'idle', 'idle', 'idle', 'idle'])
+    expect(frameAt('supervising', 3, { isBreathIn: true })).toBe('idleUp')
+    expect(frameAt('supervising', 3, { isBlinking: true })).toBe('blink')
+    expect(frameAt('supervising', 3, { isBlinkHalf: true })).toBe('blinkHalf')
+    expect(frameAt('supervising', 3, { isAnimated: false, isBreathIn: true })).toBe('idle')
+  })
+
+  test('the footer never loops the hop: the team scenes stand in there by a look toward the helpers', () => {
+    // beside the spinner the team scenes are built on the hop, with the helpers bobbing beside him; on
+    // the status row, with no helpers, that loop was a hop every half second for as long as agents ran
+    for (const team of [1, 2, 3] as const) {
+      const footer = TEAM_LOOPS[team].map(frame => footerOf(frame))
+
+      expect(footer, String(team)).toEqual(['lookR', 'lookR', 'idle', 'idle'])
+    }
+
+    for (const loop of [...Object.values(LOOPS), ...Object.values(TEAM_LOOPS), COLD_LOOP]) {
+      expect(loop.map(frame => footerOf(frame)).filter(frame => /^hop/.test(frame)), loop.join(',')).toEqual(loop === LOOPS.done ? ['hop1', 'hop2', 'hop3'] : [])
+    }
+
+    // every other frame's footer stand-in is its own solo frame
+    for (const name of FRAME_NAMES) {
+      expect(footerOf(name), name).toBe(/^team\d+a$/.test(name) ? 'lookR' : soloOf(name))
+      expect(isScene(footerOf(name)), name).toBe(false)
     }
   })
 
@@ -353,7 +462,9 @@ describe('sprite', () => {
     expect(footer(at('browsing', 6))).toEqual(['lookR', 'lookR', 'lookR', 'lookR', 'idle', 'idle'])
     expect(footer(at('asking', 4))).toEqual(['wave1', 'wave1', 'wave2', 'wave2'])
     expect(footer(at('working', 4))).toEqual(['idle', 'idle', 'blink', 'blink'])
+    // a scene's own solo frame (drawn beside the spinner with `scenes` off); the footer's stand-in is footerOf's
     expect(footer(at('delegating', 4, { team: 3 }))).toEqual(['hop2', 'hop2', 'idle', 'idle'])
+    expect(at('delegating', 4, { team: 3 }).map(frame => footerOf(frame))).toEqual(['lookR', 'lookR', 'idle', 'idle'])
     // the wave: each side held two ticks, four swings in the 2 s greeting, then the loop again
     expect(at('greeting', 9)).toEqual(['wave1', 'wave1', 'wave2', 'wave2', 'wave1', 'wave1', 'wave2', 'wave2', 'wave1'])
     expect(LOOPS.greeting.length * TICK_MS).toBe(MOMENT_MS.greeting)
@@ -361,7 +472,7 @@ describe('sprite', () => {
 
     // reduced motion holds each loop's first frame
     for (const activity of ACTIVITIES) {
-      expect(frameAt(activity, 5, { isAnimated: false }), activity).toBe(activity === 'idle' ? 'idle' : LOOPS[activity][0])
+      expect(frameAt(activity, 5, { isAnimated: false }), activity).toBe(isAtEase(activity) ? 'idle' : LOOPS[activity][0])
     }
   })
 
@@ -456,6 +567,17 @@ describe('sprite', () => {
     expect(spinnerFrame('think1', false, 'big')).toBe('lookUp')
     expect(spinnerFrame('think1', true, 'small')).toBe('lookUp')
     expect(spinnerFrame('flinch', true, 'big')).toBe('flinch')
+    // where the helpers cannot be drawn the team scenes stand in by a look, never by their bare hop
+    expect([spinnerFrame('team1a', true, 'big'), spinnerFrame('team1a', false, 'big'), spinnerFrame('team3a', true, 'small'), spinnerFrame('team2b', false, 'big')]).toEqual([
+      'team1a',
+      'lookR',
+      'lookR',
+      'idle',
+    ])
+
+    for (const team of [1, 2, 3] as const) {
+      expect(TEAM_LOOPS[team].map(frame => spinnerFrame(frame, false, 'big')).filter(frame => /^hop/.test(frame)), String(team)).toEqual([])
+    }
     // every busy loop, scenes off: only solo frames, 8 by 2
     for (const activity of ACTIVITIES) {
       for (let step = 0; step < 12; step += 1) {
@@ -736,13 +858,14 @@ describe('the activity model', () => {
     expect(nextChangeIn(m, 3_000 + SLEEP_MS)).toBeUndefined()
   })
 
-  test('a tool event after the main turn ended (an agent in the background) shows for 8 s, then idle', () => {
+  test('a late tool event of the main loop\'s own, after its turn ended, shows for 8 s, then idle', () => {
     const m = newModel(0)
 
     turnStarted(m)
+    toolStarted(m, 'e1', 'Edit', { file_path: '/a/x.ts' }, 500)
     turnEnded(m, 1_000)
-    toolStarted(m, 'e1', 'Edit', { file_path: '/a/x.ts' }, 2_000)
-    toolEnded(m, 'e1', 'Edit', { file_path: '/a/x.ts' }, 3_000, 'agent-7')
+    // the call's end event comes after the turn's, with no agent id: the main loop's own
+    toolEnded(m, 'e1', 'Edit', { file_path: '/a/x.ts' }, 3_000)
     expect(shown(m, 3_500)).toEqual({ activity: 'editing', word: 'Editing x.ts' })
     expect(nextChangeIn(m, 3_500)).toBe(3_000 + DECAY_MS - 3_500)
     expect(shown(m, 3_000 + DECAY_MS - 1)).toEqual({ activity: 'editing', word: 'Editing x.ts' })
@@ -751,15 +874,175 @@ describe('the activity model', () => {
     expect(shown(m, 3_000 + DECAY_MS + SLEEP_MS).activity).toBe('asleep')
   })
 
-  test('a background agent\'s tool event after the turn wakes it and decays again', () => {
+  test('an agent\'s tool event after the main turn ended: he minds the agents, never its activity, until they go quiet or end', () => {
+    const m = newModel(0)
+
+    turnStarted(m)
+    turnEnded(m, 1_000)
+    toolStarted(m, 'e1', 'Edit', { file_path: '/a/x.ts' }, 2_000, 'agent-7')
+    expect(shown(m, 2_500)).toEqual({ activity: 'supervising', word: '' })
+    toolEnded(m, 'e1', 'Edit', { file_path: '/a/x.ts' }, 3_000, 'agent-7')
+    // not the agent's own activity, and no decay of it
+    expect(shown(m, 3_500)).toEqual({ activity: 'supervising', word: '' })
+    expect(shown(m, 3_000 + DECAY_MS)).toEqual({ activity: 'supervising', word: '' })
+    // nothing in flight: the next change with no event is the agents going quiet, QUIET_MS after their last sign
+    expect(nextChangeIn(m, 3_500)).toBe(3_000 + QUIET_MS - 3_500)
+    expect(shown(m, 3_000 + QUIET_MS - 1).activity).toBe('supervising')
+    // quiet for as long as he takes to fall asleep: asleep, not idle
+    expect(QUIET_MS).toBe(SLEEP_MS)
+    expect(shown(m, 3_000 + QUIET_MS).activity).toBe('asleep')
+
+    // the agent's run ending is the end of it at once: idle from then
+    const n = newModel(0)
+
+    turnStarted(n)
+    turnEnded(n, 1_000)
+    toolEnded(n, 'r1', 'Read', { file_path: '/a.ts' }, 2_000, 'agent-7')
+    expect(shown(n, 2_100).activity).toBe('supervising')
+    agentEnded(n, 'agent-7', { at: 2_200, isResting: true, isAnswer: true })
+    expect(shown(n, 2_300)).toEqual({ activity: 'idle', word: '' })
+    expect(n.report).toBe(2_200)
+    // idle since the agent's end (its last sign of work), asleep SLEEP_MS after it
+    expect(nextChangeIn(n, 2_300)).toBe(2_200 + SLEEP_MS - 2_300)
+  })
+
+  test('an agent\'s end is the last sign of its work: one that ends long after its last tool event wakes him, and its report is brought', () => {
+    const m = newModel(0)
+
+    turnStarted(m)
+    backgroundSeen(m, { agents: 1, shells: 0, hasWorkflow: false }, 500)
+    turnEnded(m, 1_000)
+    toolEnded(m, 'r1', 'Read', { file_path: '/a.ts' }, 2_000, 'agent-7')
+    // a long final answer: no tool event for eleven minutes, so he has stopped minding it and sleeps
+    expect(shown(m, 2_000 + QUIET_MS + 60_000).activity).toBe('asleep')
+
+    const end = 2_000 + QUIET_MS + 120_000
+
+    agentEnded(m, 'agent-7', { at: end, isResting: true, isAnswer: true })
+    // the end wakes him: idle from then (not asleep since the last tool event), the report waiting
+    expect(shown(m, end + 1)).toEqual({ activity: 'idle', word: '' })
+    expect(m.report).toBe(end)
+    expect(nextChangeIn(m, end + 1)).toBe(SLEEP_MS - 1)
+  })
+
+  test('only a background agent that answered leaves a report and comes off the count: not one stopped or failed, not one of a running main turn', () => {
+    const background = { agents: 2, shells: 0, hasWorkflow: false }
+    const ended = (end: { at: number; isResting: boolean; isAnswer: boolean }): { report: number | undefined; agents: number } => {
+      const m = newModel(0)
+
+      backgroundSeen(m, background, 100)
+      toolEnded(m, 'r1', 'Read', { file_path: '/a.ts' }, 200, 'agent-1')
+      agentEnded(m, 'agent-1', end)
+
+      return { report: m.report, agents: m.background.agents }
+    }
+
+    expect(ended({ at: 300, isResting: true, isAnswer: true })).toEqual({ report: 300, agents: 1 })
+    // stopped by the owner, or dead on an API error: off the count, and no page with a green check
+    expect(ended({ at: 300, isResting: true, isAnswer: false })).toEqual({ report: undefined, agents: 1 })
+    // an agent of the running main turn: that turn's own stop reads the count again
+    expect(ended({ at: 300, isResting: false, isAnswer: true })).toEqual({ report: undefined, agents: 2 })
+
+    // a workflow is one task of many agents: one agent's end does not end it
+    const w = newModel(0)
+
+    backgroundSeen(w, { agents: 1, shells: 0, hasWorkflow: true }, 100)
+    agentEnded(w, 'agent-1', { at: 300, isResting: true, isAnswer: true })
+    expect([w.background.agents, w.report]).toEqual([1, 300])
+    // with no end given (the clock could not be read) the agent is only forgotten
+    agentEnded(w, 'agent-2')
+    expect(w.background.agents).toBe(1)
+  })
+
+  test('an agent\'s call that starts while the main turn runs is held as the main loop\'s until the stop: then it is an agent\'s, and outlives the turn', () => {
+    const m = newModel(0)
+
+    turnStarted(m, 0)
+    // a background agent begins a long test run before the main turn ends; PreToolUse names no agent
+    toolStarted(m, 'long', 'Bash', { command: 'npm test' }, 2_000)
+    expect(m.calls.get('long')?.loop).toBe('')
+    backgroundSeen(m, { agents: 1, shells: 0, hasWorkflow: false }, 5_000)
+    expect(m.calls.get('long')?.loop).toBe(SOME_AGENT)
+    turnEnded(m, 5_000)
+    expect([...m.calls.keys()]).toEqual(['long'])
+    // minded for as long as the call runs, well past the quiet
+    expect(shown(m, 5_000 + QUIET_MS + 60_000).activity).toBe('supervising')
+    expect(nextChangeIn(m, 6_000)).toBe(2_000 + FORGET_MS - 6_000)
+    toolEnded(m, 'long', 'Bash', { command: 'npm test' }, 5_000 + QUIET_MS + 120_000, 'agent-1')
+    expect(shown(m, 5_000 + QUIET_MS + 121_000).activity).toBe('supervising')
+
+    // a stop that reports no agents drops every call in flight: none can be the main loop's, none an agent's
+    const n = newModel(0)
+
+    turnStarted(n, 0)
+    toolStarted(n, 'ghost', 'Bash', { command: 'npm test' }, 2_000)
+    backgroundSeen(n, NO_BACKGROUND, 5_000)
+    expect(n.calls.size).toBe(0)
+
+    // an interrupt (no stop): the main loop's own calls go; a call some agent started between turns stays
+    const o = newModel(0)
+
+    toolStarted(o, 'theirs', 'Bash', { command: 'make' }, 1_000)
+    turnStarted(o, 2_000)
+    toolStarted(o, 'own', 'Bash', { command: 'ls' }, 3_000)
+    toolEnded(o, 'f1', 'Read', { file_path: '/a.ts' }, 3_500, 'foreground-1')
+    turnEnded(o, 4_000)
+    expect([...o.calls.keys()]).toEqual(['theirs'])
+    expect(o.agents.size).toBe(0)
+    expect(shown(o, 4_100).activity).toBe('supervising')
+  })
+
+  test('the quiet has its wake while the main loop\'s own call is in flight (an open turn at rest)', () => {
+    const m = newModel(0)
+
+    turnStarted(m, 0)
+    toolEnded(m, 'r1', 'Read', { file_path: '/a.ts' }, 1_000, 'agent-1')
+    toolStarted(m, 'own', 'Bash', { command: 'sleep 3600' }, 2_000)
+    expect(shown(m, 3_000, true).activity).toBe('supervising')
+    // the agents go quiet at 1 s + QUIET_MS, sooner than the call is forgotten: that is the next wake
+    expect(nextChangeIn(m, 3_000)).toBe(1_000 + QUIET_MS - 3_000)
+    expect(shown(m, 1_000 + QUIET_MS, true)).toEqual({ activity: 'running', word: 'Running sleep' })
+  })
+
+  test('a call that starts with no main turn running is some agent\'s (PreToolUse names none): it wakes him to mind it, and its end names the agent', () => {
     const m = newModel(0)
 
     expect(shown(m, SLEEP_MS).activity).toBe('asleep')
     toolStarted(m, 'g1', 'Grep', { pattern: 'x' }, SLEEP_MS + 10)
-    expect(shown(m, SLEEP_MS + 20)).toEqual({ activity: 'searching', word: 'Searching' })
-    toolEnded(m, 'g1', 'Grep', { pattern: 'x' }, SLEEP_MS + 30)
-    expect(shown(m, SLEEP_MS + 30 + DECAY_MS - 1).activity).toBe('searching')
-    expect(shown(m, SLEEP_MS + 30 + DECAY_MS).activity).toBe('idle')
+    expect(m.calls.get('g1')?.loop).toBe(SOME_AGENT)
+    // minded, not mirrored: the agent's search is not his
+    expect(shown(m, SLEEP_MS + 20)).toEqual({ activity: 'supervising', word: '' })
+    // an unnamed agent is at work, and counts as one
+    expect([agentsAtWork(m, SLEEP_MS + 20), hasAgentSigns(m), agentCount(m, SLEEP_MS + 20)]).toEqual([true, false, 1])
+    // a call in flight keeps him at it however long it runs (FORGET_MS bounds it)
+    expect(shown(m, SLEEP_MS + 10 + QUIET_MS + 5).activity).toBe('supervising')
+    expect(shown(m, SLEEP_MS + 10 + FORGET_MS).activity).toBe('asleep')
+
+    // its end names the agent: heard from, at work for QUIET_MS more or until its run ends
+    const n = newModel(0)
+
+    toolStarted(n, 'g1', 'Grep', { pattern: 'x' }, 1_000)
+    toolEnded(n, 'g1', 'Grep', { pattern: 'x' }, 2_000, 'agent-7')
+    expect([...n.agents.keys()]).toEqual(['agent-7'])
+    expect(shown(n, 2_000 + DECAY_MS).activity).toBe('supervising')
+    agentEnded(n, 'agent-7')
+    expect(shown(n, 2_100 + DECAY_MS).activity).toBe('idle')
+
+    // an end with no name leaves it some agent's: no decay of its activity as the main loop's, nothing left to mind
+    const o = newModel(0)
+
+    toolStarted(o, 'g1', 'Grep', { pattern: 'x' }, 1_000)
+    toolEnded(o, 'g1', 'Grep', { pattern: 'x' }, 2_000)
+    expect(o.last?.loop).toBe(SOME_AGENT)
+    expect(shown(o, 2_001)).toEqual({ activity: 'idle', word: '' })
+
+    // while a main turn runs a call with no name is the main loop's, as ever
+    const q = newModel(0)
+
+    turnStarted(q)
+    toolStarted(q, 'g1', 'Grep', { pattern: 'x' }, 1_000)
+    expect(q.calls.get('g1')?.loop).toBe('')
+    expect(shown(q, 1_100)).toEqual({ activity: 'searching', word: 'Searching' })
   })
 
   test('nothing to wait for while the turn runs; the turn end drops calls left in flight', () => {
@@ -795,6 +1078,8 @@ describe('the activity model', () => {
   test('calls in flight are capped at 200, oldest dropped, and forgotten after 30 minutes', () => {
     const m = newModel(0)
 
+    turnStarted(m)
+
     for (let i = 0; i < MAX_CALLS + 5; i += 1) {
       toolStarted(m, `c${i}`, 'Read', { file_path: `/f${i}.ts` }, 100 + i)
     }
@@ -805,7 +1090,8 @@ describe('the activity model', () => {
     expect(shown(m, 1_000)).toEqual({ activity: 'reading', word: `Reading f${MAX_CALLS + 4}.ts` })
     expect(shown(m, 100 + FORGET_MS + 7).activity).toBe('reading')
     expect(m.calls.size).toBe(MAX_CALLS - 3)
-    expect(shown(m, 100 + MAX_CALLS + 4 + FORGET_MS).activity).toBe('asleep')
+    // every call forgotten: the turn that never ended is all that is left
+    expect(shown(m, 100 + MAX_CALLS + 4 + FORGET_MS).activity).toBe('thinking')
     expect(m.calls.size).toBe(0)
   })
 
@@ -822,7 +1108,7 @@ describe('/coworker text', () => {
     const options = { sprite: true, narrate: true, animate: true }
 
     expect(statusText({ isInteractive: true, isOff: false, options, doing: { activity: 'reading', word: 'Reading a.ts' }, forMs: 130_000 })).toBe(
-      'sprite on, narration on, animation on\nClaude is reading (busy for 2m 10s)\n/coworker demo plays every animation once, about a minute, in the band above the prompt',
+      'sprite on, narration on, animation on\nClaude is reading (busy for 2m 10s)\n/coworker demo plays every animation once, about two minutes, in the band above the prompt',
     )
     expect(statusText({ isInteractive: true, isOff: true, options: { ...options, animate: false }, doing: { activity: 'asleep', word: '' }, forMs: 45_000 })).toBe(
       `switched off for this session (/coworker on brings it back); options: sprite on, narration on, animation off\nClaude is asleep (idle for 45s)\n${DEMO_HINT}`,
@@ -986,6 +1272,16 @@ describe('wander', () => {
 
     expect([...seen].sort()).toEqual([0, 1, 2, 3])
     expect(WANDER_EVERY_MS).toEqual({ min: 12_000, max: 30_000 })
+
+    // minding agents he moves more often, and still stands more than he performs
+    for (let i = 0; i < 200; i += 1) {
+      const wait = nextWait(rng, true)
+
+      expect(wait >= SKIT_EVERY_MS.min && wait <= SKIT_EVERY_MS.max, String(wait)).toBe(true)
+    }
+
+    expect(SKIT_EVERY_MS).toEqual({ min: 4_000, max: 10_000 })
+    expect(SKIT_SOON_MS).toBeLessThan(1_000)
   })
 
   test('a stroll moves one cell per step on alternating feet and ends idle; every other move stays put and plays its frames', () => {
@@ -1018,11 +1314,82 @@ describe('wander', () => {
     expect(frames('sweat')).toEqual(['sweat1', 'sweat2', 'sweat1', 'sweat2'])
     expect(frames('clock')).toEqual(['clock1', 'clock1', 'clock2', 'clock2'])
     expect(frames('pumpkin')).toEqual(['pumpkin1', 'pumpkin1', 'pumpkin1', 'pumpkin2', 'pumpkin2', 'pumpkin1', 'pumpkin1', 'pumpkin1', 'pumpkin2', 'pumpkin2'])
-    expect(Object.keys(STILL)).toEqual(['look', 'hop', 'yawn', 'sip', 'sweat', 'clock', 'pumpkin'])
+    expect(frames('peek')).toEqual(['term1', 'term1', 'term1', 'term1', 'term2', 'term2', 'term2', 'term2', 'term2', 'term2'])
+    expect(Object.keys(STILL).slice(0, 8)).toEqual(['look', 'hop', 'yawn', 'sip', 'sweat', 'clock', 'pumpkin', 'peek'])
+    // every move but the stroll, the tally and the garden (whose frames depend on something) has its frames in STILL
+    expect(Object.keys(STILL).sort()).toEqual(ALL_MOVES.filter(kind => kind !== 'stroll' && kind !== 'tally' && kind !== 'garden').sort())
 
-    for (const kind of ['yawn', 'sip', 'sweat', 'clock', 'pumpkin'] as const) {
+    for (const kind of ALL_MOVES.filter(each => each !== 'stroll')) {
       expect(moveSteps(kind, 4, 9).every(step => step.x === 4), kind).toBe(true)
     }
+  })
+
+  test('the skits, tick by tick: each a short story of 2.5 to 6 s that ends where the breath can take over', () => {
+    const frames = (kind: MoveKind, detail = {}): string[] => moveSteps(kind, 2, 2, detail).map(step => step.frame)
+    const run = (kind: MoveKind): string => {
+      const out: string[] = []
+
+      for (const frame of frames(kind)) {
+        if (out.at(-1)?.startsWith(`${frame} `)) {
+          out[out.length - 1] = `${frame} ${Number(out.at(-1)?.split(' ')[1]) + 1}`
+        } else {
+          out.push(`${frame} 1`)
+        }
+      }
+
+      return out.join(', ')
+    }
+
+    expect(run('radar')).toBe('radar1 2, radar2 2, radar3 2, radar4 2, radar1 2, radar2 2, radar3 2, radar4 2')
+    expect(run('radio')).toBe('radio1 4, radio2 2, radio1 2, radio2 2, radio3 4')
+    expect(run('report')).toBe('report1 2, report2 2, report3 4, report4 4')
+    expect(run('launch')).toBe('launch1 4, launch2 2, launch3 4')
+    expect(run('perch')).toBe('perch1 3, perch2 2, perch1 2, perch2 2, perch1 3')
+    expect(run('conduct')).toBe('conduct1 2, conduct2 2, conduct3 2, conduct2 2, conduct1 2, conduct2 2, conduct3 2, conduct2 2')
+    expect(frames('juggle')).toEqual(Array.from({ length: 6 }, () => ['juggle1', 'juggle2', 'juggle3']).flat())
+    expect(run('gum')).toBe('gum1 3, gum2 5, gum3 3')
+    expect(run('popcorn')).toBe('popcorn1 3, popcorn2 2, popcorn1 3, popcorn2 2, popcorn1 3, popcorn2 2')
+    expect(run('plane')).toBe('plane1 3, plane2 2, plane3 4, plane4 2, plane5 4')
+    expect(run('zen')).toBe('zen1 4, zen2 4, zen1 4, zen2 4, zen1 4, zen2 4')
+    expect(run('lantern')).toBe('lantern1 3, lantern2 2, lantern1 3, lantern2 2')
+    // the bite is not undone
+    expect(run('lunch')).toBe('lunch1 4, lunch2 6')
+
+    for (const kind of SKITS) {
+      const ms = frames(kind).length * TICK_MS
+
+      expect(ms, kind).toBeGreaterThanOrEqual(2_500)
+      expect(ms, kind).toBeLessThanOrEqual(6_000)
+      // a skit is solo frames only, and never the hop
+      expect(frames(kind).filter(frame => isScene(frame as FrameName) || /^hop/.test(frame)), kind).toEqual([])
+    }
+  })
+
+  test('the tally shows how many agents are at work, 9+ past nine; the garden grows with the wait', () => {
+    expect([1, 2, 5, 9, 10, 37, 0, -3, NaN, undefined].map(count => tallyFrame(count))).toEqual([
+      'tally1',
+      'tally2',
+      'tally5',
+      'tally9',
+      'tallyMany',
+      'tallyMany',
+      'tally1',
+      'tally1',
+      'tally1',
+      'tally1',
+    ])
+    // the paddle lifted, shown for 2 s, lowered
+    expect(stillFrames('tally', { count: 4 })).toEqual(['tally0', 'tally0', ...Array.from({ length: 8 }, () => 'tally4'), 'tally0', 'tally0'])
+    expect(stillFrames('tally')[2]).toBe('tally1')
+
+    expect(GARDEN_STAGE_MS).toEqual([2 * 60_000, 6 * 60_000, 15 * 60_000])
+    expect([0, 119_999, 120_000, 359_999, 360_000, 899_999, 900_000, 7_200_000, NaN, undefined, -5].map(forMs => gardenStage(forMs))).toEqual([1, 1, 2, 2, 3, 3, 4, 4, 1, 1, 1])
+    // watered, then admired, at the stage the wait has reached
+    expect(stillFrames('garden', { forMs: 0 })).toEqual([...Array.from({ length: 4 }, () => 'water1'), ...Array.from({ length: 6 }, () => 'plant1')])
+    expect(new Set(stillFrames('garden', { forMs: 7 * 60_000 }))).toEqual(new Set(['water3', 'plant3']))
+    expect(new Set(stillFrames('garden', { forMs: 60 * 60_000 }))).toEqual(new Set(['water4', 'plant4']))
+    // any other kind is STILL's
+    expect(stillFrames('zen', { count: 9, forMs: 9 })).toBe(STILL.zen)
   })
 
   test('the next move: all five everyday kinds turn up, a stroll always goes somewhere else inside the range, a stroll, look or hop ends idle', () => {
@@ -1145,6 +1512,162 @@ describe('wander', () => {
     const all: GatedMove[] = gatedMoves({ context: 91, sevenDay: 'over' }, OCT, 24, true)
 
     expect(all).toHaveLength(3)
+  })
+
+  describe('minding agents', () => {
+    const BASE: SkitContext = { count: 3, forMs: 60_000, isWorkflow: false, hour: 15, isSeasonal: true }
+    /** How often each kind turns up in `count` skits from one seed, each told the kind before it. */
+    const skits = (count: number, context: Partial<SkitContext> = {}, range: number = WANDER_RANGE.big.compact, seed = 23): { seen: Record<string, number>; order: MoveKind[] } => {
+      const rng = seeded(seed)
+      const seen: Record<string, number> = {}
+      const order: MoveKind[] = []
+      let last: MoveKind | undefined
+
+      for (let i = 0; i < count; i += 1) {
+        const move = chooseSkit(rng, i % 2, range, { ...BASE, ...context, last })
+
+        seen[move.kind] = (seen[move.kind] ?? 0) + 1
+        order.push(move.kind)
+        last = move.kind
+      }
+
+      return { seen, order }
+    }
+
+    test('the mix: every everyday skit turns up, never the hop, never one that answers an event, and none twice running', () => {
+      const { seen, order } = skits(3_000)
+
+      expect(Object.keys(seen).sort()).toEqual(['garden', 'gum', 'juggle', 'look', 'perch', 'plane', 'popcorn', 'radar', 'radio', 'sip', 'stroll', 'tally', 'yawn', 'zen'])
+
+      for (const kind of ['hop', 'report', 'launch', 'conduct', 'lantern', 'lunch', 'clock', 'sweat', 'pumpkin', 'peek']) {
+        expect(seen[kind] ?? 0, kind).toBe(0)
+      }
+
+      for (let i = 1; i < order.length; i += 1) {
+        expect(order[i], String(i)).not.toBe(order[i - 1])
+      }
+
+      // no one skit crowds the others out: the commonest is under one in six
+      expect(Math.max(...Object.values(seen))).toBeLessThan(3_000 / 6)
+      // one seed, one sequence
+      expect(skits(100, {}, 1, 5).order).toEqual(skits(100, {}, 1, 5).order)
+    })
+
+    test('the skits that need a reason: the conductor a workflow, the lantern the night, the sandwich the lunch hour, the hourglass a long wait', () => {
+      expect(skits(1_500, { isWorkflow: true }).seen.conduct ?? 0).toBeGreaterThan(80)
+      expect(skits(1_500, { hour: 23 }).seen.lantern ?? 0).toBeGreaterThan(80)
+      expect(skits(1_500, { hour: 3 }).seen.lantern ?? 0).toBeGreaterThan(80)
+      expect(skits(1_500, { hour: 12 }).seen.lunch ?? 0).toBeGreaterThan(80)
+      expect(skits(1_500, { forMs: LONG_WAIT_MS }).seen.clock ?? 0).toBeGreaterThan(40)
+      expect(skits(1_500, { forMs: LONG_WAIT_MS - 1 }).seen.clock ?? 0).toBe(0)
+      // the time-bound ones are the `seasonal` option's
+      expect(skits(1_500, { hour: 23, isSeasonal: false }).seen.lantern ?? 0).toBe(0)
+      expect(skits(1_500, { hour: 12, isSeasonal: false }).seen.lunch ?? 0).toBe(0)
+      expect([21, 22, 23, 0, 5, 6].map(hour => isNightShift(hour))).toEqual([false, true, true, true, true, false])
+      expect([11, 12, 13].map(hour => isLunchHour(hour))).toEqual([false, true, false])
+      expect(LONG_WAIT_MS).toBe(5 * 60_000)
+      // the gated moves of the idle life apply here too
+      const gated = skits(1_500, { gated: ['sweat', 'clock', 'pumpkin', 'peek'] }).seen
+
+      for (const kind of ['sweat', 'clock', 'pumpkin', 'peek']) {
+        expect(gated[kind] ?? 0, kind).toBeGreaterThan(40)
+      }
+    })
+
+    test('a stroll needs room and goes somewhere else; every other skit stays where he stands, inside the range', () => {
+      expect(skits(1_000, {}, 0).seen.stroll ?? 0).toBe(0)
+
+      const rng = seeded(3)
+
+      for (let i = 0; i < 400; i += 1) {
+        const range = [WANDER_RANGE.big.full, WANDER_RANGE.big.compact, WANDER_RANGE.small.compact][i % 3] ?? 0
+        const x = i % 16
+        const from = Math.min(x, range)
+        const move = chooseSkit(rng, x, range, BASE)
+
+        expect(move.steps.length, move.kind).toBeGreaterThan(0)
+
+        for (const step of move.steps) {
+          expect(step.x >= 0 && step.x <= range, `${move.kind} ${step.x} of ${range}`).toBe(true)
+        }
+
+        if (move.kind === 'stroll') {
+          expect(move.steps.at(-1)?.x).not.toBe(from)
+        } else {
+          expect(move.steps.every(step => step.x === from), move.kind).toBe(true)
+        }
+      }
+    })
+
+    test('the tally and the garden are played with what the context says: the agents at work, the length of the wait', () => {
+      const rng = seeded(41)
+      const faces = new Set<string>()
+
+      for (let i = 0; i < 600; i += 1) {
+        const move = chooseSkit(rng, 0, 1, { ...BASE, count: 7, forMs: 20 * 60_000 })
+
+        if (move.kind === 'tally' || move.kind === 'garden') {
+          for (const step of move.steps) {
+            faces.add(step.frame)
+          }
+        }
+      }
+
+      expect([...faces].sort()).toEqual(['plant4', 'tally0', 'tally7', 'water4'])
+    })
+
+    test('the weights: nothing weighs in unless it applies, and the hop, the report and the launch are not in the mix', () => {
+      const kinds = skitWeights(BASE, true).map(([kind]) => kind)
+
+      expect(kinds).not.toContain('hop')
+      expect(kinds).not.toContain('report')
+      expect(kinds).not.toContain('launch')
+      expect(new Set(kinds).size).toBe(kinds.length)
+
+      const weightOf = (context: SkitContext, hasRoom: boolean, kind: MoveKind): number => skitWeights(context, hasRoom).find(([each]) => each === kind)?.[1] ?? -1
+
+      expect([weightOf(BASE, true, 'stroll'), weightOf(BASE, false, 'stroll')]).toEqual([2, 0])
+      expect([weightOf(BASE, true, 'conduct'), weightOf({ ...BASE, isWorkflow: true }, true, 'conduct')]).toEqual([0, 4])
+      expect([weightOf(BASE, true, 'clock'), weightOf({ ...BASE, gated: ['clock'] }, true, 'clock'), weightOf({ ...BASE, forMs: LONG_WAIT_MS }, true, 'clock')]).toEqual([0, 2, 2])
+    })
+  })
+
+  test('a caption takes cells from the walk: the range is what the row as drawn leaves, and no stroll steps past it', () => {
+    const big = { isPicture: true, size: 'big' as const }
+    const view = (caption: string) => ({ ...viewOf('supervising', 0), caption })
+
+    // no caption: wanderRoom's answer, at full width and in a narrow terminal (which draws no caption at all)
+    expect([footerRange([], view(''), big), footerRange([], view(''), { ...big, isCompact: true })]).toEqual([wanderRoom(false, true, 'big'), wanderRoom(true, true, 'big')])
+    expect(footerRange([], view('3 agents'), { ...big, isCompact: true })).toBe(1)
+    // minding agents at full width: the count beside him leaves three cells, two, one, none
+    expect([footerRange([], view('3 agents'), big), footerRange([], view('9+ agents'), big), footerRange(['focus'], view('3 agents'), big), footerRange(['focus'], view('9+ agents'), big)]).toEqual([3, 2, 1, 0])
+
+    for (const [modes, caption] of [[[], '1 agent'], [[], '9+ agents'], [['focus'], '3 agents'], [['focus'], '9+ agents']] as [string[], string][]) {
+      const range = footerRange(modes, view(caption), big)
+      const rng = seeded(17)
+
+      for (let i = 0; i < 300; i += 1) {
+        const move = chooseSkit(rng, i % 14, range, { count: 3, forMs: 0, isWorkflow: false, hour: 15, isSeasonal: true })
+
+        for (const step of move.steps) {
+          // every step is where the row draws him: footerPieces leaves exactly that many blank cells
+          const blanks = footerPieces(modes, view(caption), { ...big, x: step.x }).filter(piece => piece.tone === 'blank').reduce((sum, piece) => sum + [...piece.text].length, 0)
+
+          expect(blanks, `${caption} ${move.kind} ${step.x} of ${range}`).toBe(step.x)
+        }
+
+        if (range === 0) {
+          expect(move.kind).not.toBe('stroll')
+        }
+      }
+    }
+  })
+
+  test('the gate for the peek: a shell or a monitor in the background, whatever else applies', () => {
+    expect(gatedMoves({}, 0, 1, true, 0)).toEqual([])
+    expect(gatedMoves({}, 0, 1, true, 1)).toEqual(['peek'])
+    expect(gatedMoves({ context: 91 }, 9, 26, true, 3)).toEqual(['sweat', 'pumpkin', 'peek'])
+    expect(gatedMoves({}, 0, 1, false, 2)).toEqual(['peek'])
   })
 
   test('the clamp: whole cells from 0 to the smallest limit', () => {
@@ -1300,31 +1823,180 @@ describe('review fixes', () => {
     expect(shown(m, 77).activity).not.toBe('asking')
   })
 
-  test('background work keeps the calls in flight past the main turn and keeps Claude from idling or sleeping', () => {
+  test('the stop report read by task type alone: agents and workflows are agent work, shells and monitors only run, ended tasks do not count', () => {
+    expect(backgroundOf([])).toEqual(NO_BACKGROUND)
+    expect(backgroundOf([{ id: 'b1', type: 'shell', status: 'running', description: 'make all', command: 'TOKEN=abc make all' }])).toEqual({ agents: 0, shells: 1, hasWorkflow: false })
+    expect(backgroundOf([{ type: 'monitor', status: 'running' }, { type: 'MCP task', status: 'running' }, { type: 'Bash', status: 'pending' }])).toEqual({ agents: 0, shells: 3, hasWorkflow: false })
+    expect(backgroundOf([{ type: 'subagent', status: 'running', agent_type: 'general-purpose' }, { type: 'shell', status: 'running' }])).toEqual({ agents: 1, shells: 1, hasWorkflow: false })
+    expect(backgroundOf([{ type: 'workflow', status: 'running', name: 'review' }, { type: 'subagent', status: 'pending' }])).toEqual({ agents: 2, shells: 0, hasWorkflow: true })
+    // a type a later Claude Code adds is taken for agent work; one that is over is not counted; junk is no task's type
+    expect(backgroundOf([{ type: 'teammate', status: 'running' }])).toEqual({ agents: 1, shells: 0, hasWorkflow: false })
+    expect(backgroundOf([{ type: 'workflow', status: 'completed' }, { type: 'subagent', status: 'killed' }, { type: 'shell', status: 'failed' }])).toEqual(NO_BACKGROUND)
+    expect(backgroundOf([null, 3, 'workflow', []])).toEqual({ agents: 4, shells: 0, hasWorkflow: false })
+  })
+
+  test('agents at work in the background, the main loop at rest: he minds them (supervising), neither idle nor asleep, and never delegating', () => {
+    const m = newModel(0)
+
+    turnStarted(m)
+    toolStarted(m, 'wf', 'Workflow', { script: 'x' }, 100)
+    toolEnded(m, 'wf', 'Workflow', { script: 'x' }, 150)
+    backgroundSeen(m, { agents: 1, shells: 0, hasWorkflow: true }, 200)
+    // while the main turn runs he shows the main loop's work
+    expect(shown(m, 250).activity).toBe('thinking')
+    turnEnded(m, 300)
+    expect(shown(m, 300)).toEqual({ activity: 'supervising', word: '' })
+    expect([agentsAtWork(m, 300), hasAgentSigns(m), m.agentsSince]).toEqual([true, true, 200])
+
+    // an agent's call in flight keeps him minding them however long it runs, and is never shown as his own activity
+    toolStarted(m, 'mk', 'Bash', { command: 'make all' }, 400, 'agent-7')
+    expect(shown(m, 400 + SLEEP_MS)).toEqual({ activity: 'supervising', word: '' })
+    expect(nextChangeIn(m, 500)).toBe(400 + FORGET_MS - 500)
+    toolEnded(m, 'mk', 'Bash', { command: 'make all' }, 400 + SLEEP_MS + 10, 'agent-7')
+
+    const last = 400 + SLEEP_MS + 10
+
+    expect(shown(m, last + DECAY_MS + 1).activity).toBe('supervising')
+    expect(nextChangeIn(m, last + 1)).toBe(QUIET_MS - 1)
+    // nothing heard of any agent for QUIET_MS: the report is stale, and he sleeps
+    expect(shown(m, last + QUIET_MS - 1).activity).toBe('supervising')
+    expect(shown(m, last + QUIET_MS).activity).toBe('asleep')
+    expect(m.agentsSince).toBeUndefined()
+    // a sign of an agent wakes him back to minding them, a new stretch
+    toolEnded(m, 'r2', 'Read', { file_path: '/a.ts' }, last + QUIET_MS + 5, 'agent-8')
+    expect(shown(m, last + QUIET_MS + 6).activity).toBe('supervising')
+    expect(m.agentsSince).toBe(last + QUIET_MS + 5)
+  })
+
+  test('the main loop\'s stop is the word on the agents: none reported, none at work, whatever was in flight', () => {
+    const m = newModel(0)
+
+    turnStarted(m)
+    backgroundSeen(m, { agents: 2, shells: 0, hasWorkflow: false }, 100)
+    turnEnded(m, 200)
+    toolStarted(m, 'a1', 'Bash', { command: 'npm test' }, 300, 'agent-1')
+    toolStarted(m, 'a2', 'Read', { file_path: '/a.ts' }, 310, 'agent-2')
+    expect(shown(m, 400).activity).toBe('supervising')
+    // the notification turn: the agents were killed or finished with no end event; its stop reports none
+    turnStarted(m, 500)
+    expect(shown(m, 510).activity).toBe('reading')
+    toolStarted(m, 'own', 'Grep', { pattern: 'x' }, 550)
+    backgroundSeen(m, NO_BACKGROUND, 600)
+    expect([m.calls.size, m.agents.size, hasAgentSigns(m)]).toEqual([0, 0, false])
+    turnEnded(m, 700)
+    expect(shown(m, 800)).toEqual({ activity: 'idle', word: '' })
+    expect(nextChangeIn(m, 800)).toBe(700 + SLEEP_MS - 800)
+
+    // an agent's own stop can lower the count, never raise it or call anything a sign
+    const n = newModel(0)
+
+    turnStarted(n)
+    backgroundSeen(n, { agents: 3, shells: 1, hasWorkflow: true }, 100, false)
+    expect(n.background).toEqual({ agents: 0, shells: 1, hasWorkflow: false, at: 0 })
+    expect(hasAgentSigns(n)).toBe(false)
+    backgroundSeen(n, { agents: 3, shells: 0, hasWorkflow: true }, 200)
+    backgroundSeen(n, { agents: 2, shells: 0, hasWorkflow: true }, 250, false)
+    expect(n.background).toEqual({ agents: 2, shells: 0, hasWorkflow: true, at: 200 })
+    backgroundSeen(n, NO_BACKGROUND, 260, false)
+    expect(n.background).toEqual({ agents: 0, shells: 0, hasWorkflow: false, at: 200 })
+  })
+
+  test('a turn that ends with no agents reported drops every call and every agent heard from (an interrupt ends the main loop\'s own agents silently)', () => {
+    const m = newModel(0)
+
+    turnStarted(m)
+    toolStarted(m, 'ag', 'Agent', { description: 'd', prompt: 'p' }, 100)
+    toolStarted(m, 'x', 'Bash', { command: 'make all' }, 200, 'agent-1')
+    expect(shown(m, 250)).toEqual({ activity: 'running', word: 'Running make' })
+    // interrupted: no stop hook, no end events
+    turnEnded(m, 300)
+    expect([m.calls.size, m.agents.size]).toEqual([0, 0])
+    expect(shown(m, 300 + DECAY_MS + 1).activity).toBe('idle')
+
+    // with agents reported in the background the main loop's own calls go and the agents' stay
+    const n = newModel(0)
+
+    turnStarted(n)
+    backgroundSeen(n, { agents: 1, shells: 0, hasWorkflow: false }, 50)
+    toolStarted(n, 'own', 'Bash', { command: 'sleep 99' }, 100)
+    toolStarted(n, 'theirs', 'Grep', { pattern: 'x' }, 200, 'agent-1')
+    turnEnded(n, 300)
+    expect([...n.calls.keys()]).toEqual(['theirs'])
+    expect(shown(n, 400).activity).toBe('supervising')
+  })
+
+  test('background shells keep nothing busy: idle at once, asleep after ten minutes', () => {
     const m = newModel(0)
 
     turnStarted(m)
     toolStarted(m, 'mk', 'Bash', { command: 'make all' }, 100)
-    backgroundSeen(m, 1, 200)
+    toolEnded(m, 'mk', 'Bash', { command: 'make all' }, 150)
+    backgroundSeen(m, { agents: 0, shells: 1, hasWorkflow: false }, 200)
     turnEnded(m, 300)
-    // the build is still in flight ten minutes on
-    expect(shown(m, 300 + SLEEP_MS)).toEqual({ activity: 'running', word: 'Running make' })
-    toolEnded(m, 'mk', 'Bash', { command: 'make all' }, 400, 'agent-7')
-    // nothing in flight, but the session still has background work: delegating, never idle or asleep
-    expect(shown(m, 400 + DECAY_MS + 1).activity).toBe('delegating')
-    expect(shown(m, 400 + SLEEP_MS).activity).toBe('delegating')
-    expect(nextChangeIn(m, 400 + DECAY_MS + 1)).toBe(FORGET_MS - DECAY_MS - 1)
-    // nothing heard for 30 minutes: the report is stale
-    expect(shown(m, 400 + FORGET_MS).activity).not.toBe('delegating')
+    expect(shown(m, 300)).toEqual({ activity: 'idle', word: '' })
+    expect(shown(m, 300 + DECAY_MS + 1).activity).toBe('idle')
+    expect(nextChangeIn(m, 300)).toBe(SLEEP_MS)
+    expect(shown(m, 300 + SLEEP_MS).activity).toBe('asleep')
+    expect(m.background.shells).toBe(1)
+  })
 
-    // with no background work the turn's end drops the calls, as before
-    const n = newModel(0)
+  test('the main loop at rest with its turn left open (no spinner drawn): agents at work get his attention, else the turn\'s own work shows', () => {
+    const m = newModel(0)
 
-    turnStarted(n)
-    toolStarted(n, 'x', 'Bash', { command: 'make all' }, 100)
-    backgroundSeen(n, 0, 200)
-    turnEnded(n, 300)
-    expect(shown(n, 300 + DECAY_MS + 1).activity).toBe('idle')
+    turnStarted(m, 0)
+    // at work (the spinner is drawn): the main loop's own
+    expect(shown(m, 100, false).activity).toBe('thinking')
+    // at rest, no agents: still the open turn's work
+    expect(shown(m, 100, true).activity).toBe('thinking')
+    toolStarted(m, 'r1', 'Read', { file_path: '/a.ts' }, 200)
+    expect(shown(m, 250, true).activity).toBe('reading')
+    toolEnded(m, 'r1', 'Read', { file_path: '/a.ts' }, 300)
+    // an agent at work: at rest he minds it, at work he shows the newest call
+    toolStarted(m, 'g1', 'Grep', { pattern: 'x' }, 400, 'agent-3')
+    expect(shown(m, 450, true)).toEqual({ activity: 'supervising', word: '' })
+    expect(shown(m, 450, false)).toEqual({ activity: 'searching', word: 'Searching' })
+    // a permission ask comes first either way
+    permissionAsked(m, 500, 'agent-3', 'Grep')
+    expect([shown(m, 550, true).activity, shown(m, 550, false).activity]).toEqual(['asking', 'asking'])
+  })
+
+  test('the gesture at the turn\'s end plays out before he turns to the agents', () => {
+    const m = newModel(0)
+
+    turnStarted(m, 0)
+    backgroundSeen(m, { agents: 1, shells: 0, hasWorkflow: true }, 900)
+    toolStarted(m, 'b', 'Bash', { command: 'npm test' }, 950, 'agent-1')
+    turnEnded(m, 1_000, true)
+    expect(shown(m, 1_100).activity).toBe('done')
+    expect(nextChangeIn(m, 1_100)).toBe(MOMENT_MS.done - 100)
+    expect(shown(m, 1_000 + MOMENT_MS.done).activity).toBe('supervising')
+  })
+
+  test('how many agents he minds: those with a call in flight or heard from lately, or the tasks reported when that is more', () => {
+    const m = newModel(0)
+
+    expect(agentCount(m, 0)).toBe(1)
+    backgroundSeen(m, { agents: 1, shells: 0, hasWorkflow: true }, 100)
+    expect(agentCount(m, 100)).toBe(1)
+
+    for (let i = 1; i <= 4; i += 1) {
+      toolEnded(m, `r${i}`, 'Read', { file_path: '/a.ts' }, 1_000 + i, `agent-${i}`)
+    }
+
+    expect(agentCount(m, 2_000)).toBe(4)
+    // one ends; one has a call in flight long after the others went quiet
+    agentEnded(m, 'agent-2')
+    expect(agentCount(m, 2_100)).toBe(3)
+    toolStarted(m, 'long', 'Bash', { command: 'make' }, 2_200, 'agent-4')
+    expect(agentCount(m, 2_200 + SEEN_MS + 1)).toBe(1)
+    expect(SEEN_MS).toBe(3 * 60_000)
+    // an agent that ended leaves no call in flight, and a report only when one is asked for
+    expect(m.report).toBeUndefined()
+    agentEnded(m, 'agent-4', { at: 5_000, isResting: true, isAnswer: true })
+    expect([m.calls.size, m.report]).toEqual([0, 5_000])
+    // more tasks reported than agents heard from: the tasks
+    backgroundSeen(m, { agents: 5, shells: 0, hasWorkflow: false }, 7_000)
+    expect(agentCount(m, 7_000)).toBe(5)
   })
 
   test('the Bash word never carries an argument, whatever the shell syntax around the program', () => {
@@ -1443,10 +2115,26 @@ describe('the demo tour', () => {
       'sweat',
       'clock',
       'pumpkin',
+      'peek',
+      'launch',
+      'tally',
+      'radar',
+      'radio',
+      'report',
+      'perch',
+      'conduct',
+      'juggle',
+      'gum',
+      'popcorn',
+      'plane',
+      'zen',
+      'garden',
+      'lantern',
+      'lunch',
       'asleep',
       'asleep, cache cold',
     ])
-    expect(DEMO_ACTS).toBe(30)
+    expect(DEMO_ACTS).toBe(46)
     // the words are the narration's own for a sample call (or the spinner's mode with none)
     expect(DEMO_WORDS).toEqual({
       thinking: 'Thinking',
@@ -1466,19 +2154,22 @@ describe('the demo tour', () => {
     })
   })
 
-  test('about a minute in all, each act about 2 s, every loop played whole', () => {
+  test('about two minutes in all, each act about 2 s and each skit its own 2.5 to 6 s, every loop played whole', () => {
     const steps = demoSteps()
     const total = steps.reduce((sum, step) => sum + step.ms, 0)
+    const skitActs = new Set<string>(SKITS)
 
     expect(ACT_MS).toBe(2_000)
-    expect(total).toBeGreaterThanOrEqual(60_000)
-    expect(total).toBeLessThanOrEqual(75_000)
+    // the README, the changelog and the design doc quote this number
+    expect(total).toBe(120_750)
 
     for (let act = 0; act < DEMO_ACTS; act += 1) {
       const ms = actSteps(act).reduce((sum, [, length]) => sum + length, 0)
+      const name = demoActs()[act] ?? ''
 
-      expect(ms, demoActs()[act]).toBeGreaterThanOrEqual(1_250)
-      expect(ms, demoActs()[act]).toBeLessThanOrEqual(3_000)
+      // a skit is played once, whole: longer than the two seconds an act of a loop takes
+      expect(ms, name).toBeGreaterThanOrEqual(skitActs.has(name) ? 2_500 : 1_250)
+      expect(ms, name).toBeLessThanOrEqual(skitActs.has(name) ? 6_000 : 3_000)
     }
 
     // a frame held over several ticks is one step: two steps in a row of one act always differ
@@ -1494,11 +2185,60 @@ describe('the demo tour', () => {
     expect([...new Set(steps.map(step => step.act))]).toEqual(Array.from({ length: DEMO_ACTS }, (_, act) => act))
   })
 
-  test('every scene shows, the swapped ones included, and every solo frame but the three that only stand in for a scene in the footer', () => {
+  test('every scene shows, the swapped ones included, and every solo frame but the three that only stand in for a scene in the footer and the tally\'s other digits', () => {
     const shown = new Set(demoSteps().map(step => step.frame))
 
     expect(Object.keys(SCENE_FRAMES).filter(frame => !shown.has(frame as FrameName))).toEqual([])
-    expect(Object.keys(SOLO_FRAMES).filter(frame => !shown.has(frame as FrameName))).toEqual(['lookUp', 'lookDown', 'armsIn'])
+    // the tour's tally shows three agents; the plant goes through all four stages
+    expect(Object.keys(SOLO_FRAMES).filter(frame => !shown.has(frame as FrameName))).toEqual([
+      'lookUp',
+      'lookDown',
+      'armsIn',
+      'tally1',
+      'tally2',
+      'tally4',
+      'tally5',
+      'tally6',
+      'tally7',
+      'tally8',
+      'tally9',
+      'tallyMany',
+    ])
+  })
+
+  test('the skits in the tour: the send-off first, the tally for three agents, the plant through its four stages', () => {
+    expect(actOf('launch')).toBe(actOf('peek') + 1)
+    expect(actSteps(actOf('launch'))).toEqual([
+      ['launch1', 1_000],
+      ['launch2', 500],
+      ['launch3', 1_000],
+    ])
+    expect(actSteps(actOf('tally'))).toEqual([
+      ['tally0', 500],
+      ['tally3', 2_000],
+      ['tally0', 500],
+    ])
+    expect(actSteps(actOf('report'))).toEqual([
+      ['report1', 500],
+      ['report2', 500],
+      ['report3', 1_000],
+      ['report4', 1_000],
+    ])
+    expect(actSteps(actOf('garden'))).toEqual([
+      ['water1', 500],
+      ['plant1', 500],
+      ['water2', 500],
+      ['plant2', 500],
+      ['water3', 500],
+      ['plant3', 500],
+      ['water4', 500],
+      ['plant4', 500],
+    ])
+    expect(actSteps(actOf('zen')).reduce((sum, [, ms]) => sum + ms, 0)).toBe(6_000)
+    expect(actSteps(actOf('peek'))).toEqual([
+      ['term1', 1_000],
+      ['term2', 1_500],
+    ])
   })
 
   test('the busy acts are the spinner\'s scenes: the bubble, the pen, the globe under a glass, the team of one, two and three, the scroll, the plug', () => {

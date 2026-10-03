@@ -1,8 +1,8 @@
 {
   "name": "clawdagotchi",
   "metadata": {
-    "description": "A pixel-art Claude who works beside your Claude Code session: he reads, searches, types, runs, thinks and writes along with the spinner, wanders the status row while idle, and sleeps when you do. Plus the chip status line he lives on.",
-    "version": "0.5.4"
+    "description": "A pixel-art Claude who works beside your Claude Code session: he reads, searches, types, runs, thinks and writes along with the spinner, wanders the status row while idle, minds your background agents with a skit every few seconds, and sleeps when you do. Plus the chip status line he lives on.",
+    "version": "0.6.0"
   },
   "owner": {
     "name": "TheMizeGuy",
@@ -11,9 +11,9 @@
   "plugins": [
     {
       "name": "mize-coworker",
-      "description": "Claude as a small coworker in the terminal: an orange pixel-art Claude, two rows tall, in 73 frames. While a turn runs he sits beside the spinner in a scene for every spinner word (a thought bubble, a pen on a notepad, a book, a magnifying glass over text or over a globe, a laptop, a terminal, his own small helpers, a gear, a scroll for a skill, a plug for an MCP call); idle on the status row he breathes, blinks, strolls, yawns and sips a coffee, sweats near a full context and sleeps frosted once the prompt cache goes cold. The spinner word says what is happening (Reading register.ts, Running npm), and /coworker demo plays every animation once. Draws only; nothing reaches the model.",
+      "description": "Claude as a small coworker in the terminal: an orange pixel-art Claude, two rows tall, in 132 frames. While a turn runs he sits beside the spinner in a scene for every spinner word (a thought bubble, a pen on a notepad, a book, a magnifying glass over text or over a globe, a laptop, a terminal, his own small helpers, a gear, a scroll for a skill, a plug for an MCP call); idle on the status row he breathes, blinks, strolls, yawns and sips a coffee, sweats near a full context and sleeps frosted once the prompt cache goes cold. While the main session rests and agents or workflows work in the background he minds them with a skit every few seconds: a rocket as they start, a paddle with how many are at work, a radar, a headset, a helper bringing a finished agent's report, juggling, bubble gum, popcorn, a paper plane, a plant that grows with the wait. The spinner word says what is happening (Reading register.ts, Running npm), and /coworker demo plays every animation once. Draws only; nothing reaches the model.",
       "source": "./plugins/mize-coworker",
-      "version": "0.5.4",
+      "version": "0.6.0",
       "category": "claude-code-mods",
       "keywords": [
         "mods",

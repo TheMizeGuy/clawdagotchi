@@ -463,9 +463,11 @@ test('a turn starts the 250 ms timer, unchanged frames are not written, and the 
   expect(z?.props.color).toBe(MUTED)
   await grey.unmount()
 
-  // a tool event wakes it, and the sleep loop stops
+  // a tool call with no main turn running is an agent's: it wakes him to mind it (not to mirror
+  // its search), and the sleep loop stops
   await call($, w, { tool: 'Grep', pattern: 'x' })
-  expect(views(w).at(-1)?.caption).toBe('searching')
+  expect(views(w).at(-1)).toEqual({ frame: 'idle', sprite: IDLE, caption: '1 agent', isAsleep: false })
+  expect(doings(w).at(-1)).toEqual({ activity: 'supervising', word: '' })
 
   const sleeps = waits(w, 'every', 3_000)
 
@@ -682,7 +684,7 @@ test('/coworker prints the status; off and on from the composer switch both, oth
   expect(w.logs.slice(-3)).toEqual([
     'sprite on, narration on, animation on',
     'Claude is reading (busy for 2s)',
-    '/coworker demo plays every animation once, about a minute, in the band above the prompt',
+    '/coworker demo plays every animation once, about two minutes, in the band above the prompt',
   ])
 
   expect(await run($, 'off', { kind: 'sdk' })).toBeUndefined()
@@ -1300,28 +1302,314 @@ test('a session open for days rewrites its reserve at a turn start, inside the s
   expect(writesTo(files, DEFAULT_FILE)).toBe(1)
 })
 
-test('background work the session reports keeps Claude busy after the main turn ends', { options: { gestures: false }, plugins: [observer] }, async ($, on) => {
+/** A stop of the main loop with these tasks still in the background. */
+async function mainStop($: Engine, tasks: Record<string, unknown>[]): Promise<void> {
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: tasks } as never)
+}
+
+/** A tool call an agent finished: the classic event, with its agent id. */
+async function agentDid($: Engine, agentId: string, id: string, tool = 'Read', input: Record<string, unknown> = { file_path: '/work/a.ts' }): Promise<void> {
+  await $.classic.PostToolUse({ tool_name: tool, tool_input: input, tool_response: 'ok', tool_use_id: id, agent_id: agentId } as never)
+}
+
+const SHELL_TASK = { id: 'b1', type: 'shell', status: 'running', description: 'make all', command: 'make all' }
+const WORKFLOW_TASK = { id: 'w1', type: 'workflow', status: 'running', description: 'review', name: 'review' }
+const AGENT_TASK = { id: 'a1', type: 'subagent', status: 'running', description: 'explore', agent_type: 'general-purpose' }
+/** The frames of the skits and of the peek: none is drawn unless he minds agents (or a shell runs). */
+const SKIT_FRAME = /^(tally|radar|radio|report|launch|perch|conduct|juggle|gum|popcorn|plane|zen|plant|water|lantern|lunch|term)/
+
+test('a shell in the background keeps nothing busy: idle once the turn ends, no hop loop, a peek at a small terminal now and then, asleep after ten minutes', { plugins: [observer] }, async ($, on) => {
+  const w = world()
+
+  stubs(on, w)
+  // 15:00 on 2 October 2026, local time: no pumpkin, no lantern, no lunch
+  const clock = mock.clock(on, { now: new Date(2026, 9, 2, 15).getTime() })
+
+  vitalsStubs(on, clock, () => CALM)
+  await start($)
+  await clock.advance(3_000)
+  await turnStart($)
+
+  const id = await call($, w, { tool: 'Bash', command: 'make all' })
+
+  await done($, id, 'Bash', { command: 'make all' })
+  await mainStop($, [SHELL_TASK])
+  await turnEnd($)
+  // the hop of a turn that ended with an answer, once
+  await clock.advance(2_000)
+  expect(doings(w).at(-1)).toEqual({ activity: 'idle', word: '' })
+
+  const from = views(w).length
+
+  for (let minute = 0; minute < 9; minute += 1) {
+    await clock.advance(60_000)
+  }
+
+  const later = views(w).slice(from)
+
+  // idle all along: never delegating, never minding agents, no caption, and the old loop (a hop every half second) is gone:
+  // a hop is one of his idle moves, a few in nine minutes at most
+  expect(doings(w).at(-1)).toEqual({ activity: 'idle', word: '' })
+  expect(later.filter(view => view.caption !== '')).toEqual([])
+  expect(later.filter(view => view.frame === 'hop2').length).toBeLessThan(8)
+  // the peek: the shell's own gated move
+  expect(later.some(view => view.frame === 'term1') && later.some(view => view.frame === 'term2')).toBe(true)
+  expect(later.filter(view => SKIT_FRAME.test(view.frame) && !view.frame.startsWith('term'))).toEqual([])
+
+  await clock.advance(60_000)
+  expect(views(w).at(-1)).toMatchObject({ frame: 'sleep1', isAsleep: true })
+})
+
+test('agents at work in the background with the main loop at rest: he minds them, at ease, with a send-off, skits and a count, never a hop loop, never idle or asleep', { plugins: [observer] }, async ($, on) => {
+  const w = world()
+
+  stubs(on, w)
+  const clock = mock.clock(on, { now: new Date(2026, 9, 2, 15).getTime() })
+
+  vitalsStubs(on, clock, () => CALM)
+  await start($)
+  await clock.advance(3_000)
+  await turnStart($)
+
+  const id = await call($, w, { tool: 'Workflow', script: 'x' })
+
+  await done($, id, 'Workflow', { script: 'x' })
+  await mainStop($, [WORKFLOW_TASK])
+  await turnEnd($)
+  expect(doings(w).at(-1)?.activity).toBe('done')
+
+  // the hop plays out, then he turns to the agents: standing, breathing, with how many he minds
+  await clock.advance(1_500)
+  expect(doings(w).at(-1)).toEqual({ activity: 'supervising', word: '' })
+  expect(views(w).at(-1)).toEqual({ frame: 'idle', sprite: IDLE, caption: '1 agent', isAsleep: false })
+
+  // the send-off comes at once: the rocket, a tick at a time
+  let from = views(w).length
+
+  await clock.advance(4_000)
+  expect(frames(w).slice(from).filter(frame => frame.startsWith('launch'))).toEqual(['launch1', 'launch2', 'launch3'])
+
+  // three agents are heard from: the caption counts them
+  await agentDid($, 'agent-1', 'r1')
+  await agentDid($, 'agent-2', 'r2')
+  await agentDid($, 'agent-3', 'r3', 'Bash', { command: 'npm test' })
+  expect(views(w).at(-1)?.caption).toBe('3 agents')
+  // their work is theirs: his activity, his word and the spinner's stay his own
+  expect(doings(w).at(-1)).toEqual({ activity: 'supervising', word: '' })
+
+  // twelve minutes of it, the agents heard from every half minute
+  from = views(w).length
+
+  for (let i = 0; i < 24; i += 1) {
+    await clock.advance(30_000)
+    await agentDid($, `agent-${(i % 3) + 1}`, `t${i}`)
+  }
+
+  const seen = views(w).slice(from)
+  const stems = new Set(seen.map(view => view.frame.replace(/\d+$|Many$/, '')))
+  // a skit by its frames' stem: the garden's are the plant and the watering; the peek (term) is no skit
+  const skits = new Set([...stems].filter(stem => SKIT_FRAME.test(stem) && stem !== 'term').map(stem => (stem === 'plant' || stem === 'water' ? 'garden' : stem)))
+
+  expect(doings(w).at(-1)).toEqual({ activity: 'supervising', word: '' })
+  expect(seen.some(view => view.isAsleep)).toBe(false)
+  // at ease: the breath and the blink go on between skits
+  expect(stems.has('idleUp') && stems.has('blink')).toBe(true)
+  // a varied life: at least eight different skits in twelve minutes, the tally showing three
+  expect(skits.size, [...skits].join(' ')).toBeGreaterThanOrEqual(8)
+  expect(seen.filter(view => /^tally[1-9M]/.test(view.frame)).every(view => view.frame === 'tally3')).toBe(true)
+  expect(seen.some(view => view.frame === 'tally3')).toBe(true)
+  // and never the hop: not as a loop, not as a move
+  expect(seen.filter(view => /^hop/.test(view.frame))).toEqual([])
+  // the send-off is not played twice; a workflow among the tasks brings the conductor; the plant has grown past its first stage
+  expect(seen.filter(view => view.frame.startsWith('launch'))).toEqual([])
+  expect(skits.has('conduct')).toBe(true)
+  expect(seen.some(view => /^(plant|water)[234]$/.test(view.frame))).toBe(true)
+  // the caption stays through every move
+  expect(seen.filter(view => view.caption !== '3 agents')).toEqual([])
+
+  // an agent finishes: a helper brings its report, then the count is one less
+  from = views(w).length
+  await turnEnd($, 'agent-2')
+  await clock.advance(12_000)
+  expect(frames(w).slice(from).filter(frame => frame.startsWith('report')).slice(0, 4)).toEqual(['report1', 'report2', 'report3', 'report4'])
+  expect(views(w).at(-1)?.caption).toBe('2 agents')
+
+  // /coworker says so
+  await run($, '')
+  expect(w.logs.at(-2)).toMatch(/^Claude is minding 2 agents in the background \(busy for 1\dm \d+s\)$/)
+
+  // the work ends: the notification turn's stop reports nothing, and he is idle again
+  await turnStart($)
+  expect(doings(w).at(-1)?.activity).toBe('thinking')
+  await mainStop($, [])
+  await turnEnd($)
+  await clock.advance(2_000)
+  expect(doings(w).at(-1)).toEqual({ activity: 'idle', word: '' })
+  expect(views(w).at(-1)?.caption).toBe('')
+})
+
+test('a hand-dispatched agent in the background is minded too, with no conductor; the last one ending leaves him idle at once', { plugins: [observer] }, async ($, on) => {
+  const w = world()
+
+  stubs(on, w)
+  const clock = mock.clock(on, { now: new Date(2026, 9, 2, 15).getTime() })
+
+  vitalsStubs(on, clock, () => CALM)
+  await start($)
+  await clock.advance(3_000)
+  await turnStart($)
+  await mainStop($, [AGENT_TASK, SHELL_TASK])
+  await turnEnd($)
+  await clock.advance(1_500)
+  expect(doings(w).at(-1)?.activity).toBe('supervising')
+  await agentDid($, 'agent-1', 'r1')
+
+  for (let i = 0; i < 16; i += 1) {
+    await clock.advance(30_000)
+    await agentDid($, 'agent-1', `t${i}`)
+  }
+
+  // the conductor is the workflow's
+  expect(frames(w).filter(frame => frame.startsWith('conduct'))).toEqual([])
+  expect(doings(w).at(-1)?.activity).toBe('supervising')
+
+  // its run ends: nothing left to mind
+  await turnEnd($, 'agent-1')
+  expect(doings(w).at(-1)).toEqual({ activity: 'idle', word: '' })
+})
+
+test('an agent that was stopped or died brings no report: no page with a green check for work that did not finish', { plugins: [observer] }, async ($, on) => {
+  const w = world()
+
+  stubs(on, w)
+  const clock = mock.clock(on, { now: new Date(2026, 9, 2, 15).getTime() })
+
+  vitalsStubs(on, clock, () => CALM)
+  await start($)
+  await clock.advance(3_000)
+  await turnStart($)
+  await mainStop($, [AGENT_TASK, { ...AGENT_TASK, id: 'a2' }])
+  await turnEnd($)
+  await clock.advance(6_000)
+  await agentDid($, 'agent-1', 'r1')
+  await agentDid($, 'agent-2', 'r2')
+
+  // the owner stops one: its run ends aborted
+  const from = views(w).length
+
+  await $.turn.complete({ turnId: 't1', answer: '', durationMs: 5, isAborted: true, reason: 'aborted', agentId: 'agent-1' })
+  await clock.advance(12_000)
+  expect(frames(w).slice(from).filter(frame => frame.startsWith('report'))).toEqual([])
+  // it is off the count all the same
+  expect(views(w).at(-1)?.caption).toBe('1 agent')
+
+  // the other finishes: its report is brought
+  const then = views(w).length
+
+  await turnEnd($, 'agent-2')
+  await clock.advance(6_000)
+  expect(frames(w).slice(then).filter(frame => frame.startsWith('report')).slice(0, 2)).toEqual(['report1', 'report2'])
+})
+
+test('agents that go quiet: ten minutes with no sign of one and he stops minding them and sleeps; a sign wakes him to it again', { options: { gestures: false }, plugins: [observer] }, async ($, on) => {
   const w = world()
 
   stubs(on, w)
   const clock = mock.clock(on, { now: START })
+
   await start($)
   await turnStart($)
-  await call($, w, { tool: 'Bash', command: 'make all' })
-  await $.classic.Stop({ stop_hook_active: false, background_tasks: [{ id: 'b1', type: 'shell', status: 'running', description: 'make all' }] } as never)
+  await mainStop($, [WORKFLOW_TASK])
   await turnEnd($)
+  expect(doings(w).at(-1)?.activity).toBe('supervising')
+  await clock.advance(9 * 60_000 + 59_000)
+  expect(doings(w).at(-1)?.activity).toBe('supervising')
+  await clock.advance(2_000)
+  expect(doings(w).at(-1)?.activity).toBe('asleep')
+  expect(views(w).at(-1)?.isAsleep).toBe(true)
+  await agentDid($, 'agent-1', 'r1')
+  expect(doings(w).at(-1)?.activity).toBe('supervising')
+  expect(views(w).at(-1)).toMatchObject({ isAsleep: false, caption: '1 agent' })
+})
 
-  // ten minutes later the build is still what Claude shows: not idle, not asleep
-  await clock.advance(10 * 60_000 + 9_000)
-  expect(doings(w).at(-1)).toEqual({ activity: 'running', word: 'Running make' })
-  expect(views(w).at(-1)?.isAsleep).toBe(false)
+test('gestures off: minding agents he only breathes and blinks; no skit, no send-off, no move timer', { options: { gestures: false }, plugins: [observer] }, async ($, on) => {
+  const w = world()
 
-  // the main loop stops again with nothing in the background: back to the usual rules
+  stubs(on, w)
+  const clock = mock.clock(on, { now: START })
+
+  await start($)
   await turnStart($)
-  await $.classic.Stop({ stop_hook_active: false, background_tasks: [] } as never)
+  await mainStop($, [WORKFLOW_TASK])
   await turnEnd($)
-  await clock.advance(9_000)
-  expect(doings(w).at(-1)?.activity).toBe('idle')
+  expect(doings(w).at(-1)?.activity).toBe('supervising')
+
+  const from = views(w).length
+
+  for (let i = 0; i < 6; i += 1) {
+    await clock.advance(30_000)
+    await agentDid($, 'agent-1', `t${i}`)
+  }
+
+  expect([...new Set(frames(w).slice(from))].sort()).toEqual(['blink', 'blinkHalf', 'idle', 'idleUp'])
+  expect(waits(w, 'every', 250)).toBe(1)
+})
+
+test('reduced motion: minding agents is one still frame, the count beside it, and no timer but the wake', { options: { gestures: false, animate: false }, plugins: [observer] }, async ($, on) => {
+  const w = world()
+
+  stubs(on, w)
+  const clock = mock.clock(on, { now: START })
+
+  await start($)
+  await turnStart($)
+  await mainStop($, [AGENT_TASK])
+  await turnEnd($)
+  expect(views(w).at(-1)).toEqual({ frame: 'idle', sprite: IDLE, caption: '1 agent', isAsleep: false })
+
+  const before = views(w).length
+
+  await clock.advance(5 * 60_000)
+  expect(views(w).length).toBe(before)
+  expect(waits(w, 'every')).toBe(0)
+})
+
+test('a turn left open with no spinner drawn (a /goal pause): agents at work get his attention on the status row, and the spinner coming back gives him to the main loop again', { options: { gestures: false }, plugins: [observer] }, async ($, on) => {
+  const w = world()
+
+  stubs(on, w)
+  const clock = mock.clock(on, { now: START })
+
+  await start($)
+  await turnStart($)
+  await agentDid($, 'agent-1', 'r1')
+  // the spinner has its grace: the main loop is taken to be at work
+  expect(doings(w).at(-1)?.activity, 'grace start').toBe('thinking')
+  await clock.advance(2_000)
+  expect(doings(w).at(-1)?.activity, 'grace 2s').toBe('thinking')
+
+  // past the grace with no spinner drawn: the main loop rests with its turn open, and he minds the agent
+  await clock.advance(2_000)
+  expect(doings(w).at(-1)).toEqual({ activity: 'supervising', word: '' })
+  expect(await spritePiece($, ['focus'])).toEqual({ text: IDLE, as: 'image' })
+  expect(views(w).at(-1)?.caption).toBe('1 agent')
+
+  // the engine draws its spinner again: he sits beside it at once, and by his next breath he is the
+  // main loop's, thinking
+  const ui = await spinner($)
+
+  expect(await pictureIn(ui)).toBeDefined()
+  expect(await spritePiece($, ['focus'])).toBeUndefined()
+  await clock.advance(2_000)
+  expect(doings(w).at(-1)?.activity, 'spinner back').toBe('thinking')
+  expect(await spritePiece($, ['focus'])).toBeUndefined()
+  await ui.unmount()
+  expect(w.debug.filter(line => /denied/.test(line))).toEqual([])
+
+  // with no agent at work the pause changes nothing: the open turn's own work shows, as before
+  await turnEnd($, 'agent-1')
+  await clock.advance(5_000)
+  expect(doings(w).at(-1)?.activity, 'no agent').toBe('thinking')
 })
 
 test('a reload adopts /coworker off from the host: nothing drawn, reserved or scheduled', { plugins: [observer] }, async ($, on) => {
@@ -1390,7 +1678,7 @@ test('while the main turn runs Claude sits left of the main spinner\'s whole lin
   expect((claude?.children ?? []).map(child => child.type)).toEqual(['Image'])
   expect(line?.type).toBe('Text')
   // the thought bubble: a scene of 12 cells by 2, its alt the braille of its solo frame (lookUp, the idle pose)
-  expect(await pictureIn(ui)).toEqual({ alt: IDLE, file: expect.stringMatching(PNG('think1')), format: 'png', columns: 12, rows: 2, key: 'claude' })
+  expect(await pictureIn(ui)).toEqual({ alt: IDLE, file: expect.stringMatching(PNG('think1')), format: 'png', columns: 12, rows: 2, key: 'claude-12' })
   expect((await ui.findAll({ type: 'Text' })).map(t => t.text)).toEqual([' ', 'Thinking…'])
 
   // the footer meanwhile: the engine's labels alone, no Claude, no caption
@@ -1556,7 +1844,7 @@ test('big off: the 0.2.0 drawing, the picture 4 cells by 1 in the footer and one
   expect(claude?.props).toMatchObject({ marginTop: 1, flexShrink: 0 })
   expect((claude?.children ?? []).map(child => child.type)).toEqual(['Image', 'Text'])
   // no scene in one row: the thought bubble's solo frame, 4 by 1
-  expect(await pictureIn(line)).toEqual({ alt: IDLE, file: expect.stringMatching(PNG('lookUp')), format: 'png', columns: 4, rows: 1, key: 'claude' })
+  expect(await pictureIn(line)).toEqual({ alt: IDLE, file: expect.stringMatching(PNG('lookUp')), format: 'png', columns: 4, rows: 1, key: 'claude-4' })
   expect(claude?.props).not.toHaveProperty('minWidth')
   expect(await lineOf(line)).toBe('Thinking…')
   await line.unmount()
@@ -1747,7 +2035,7 @@ test('scenes off: beside the spinner too Claude is a solo frame, 8 by 2, in a se
   const drawn = (await ui.drawn()) as { children?: { props?: Record<string, unknown> }[] }
 
   // the thought bubble's solo frame (eyes up), no prop, and no padding: every frame there is 8 wide
-  expect(await pictureIn(ui)).toEqual({ alt: IDLE, file: expect.stringMatching(PNG('lookUp')), format: 'png', columns: 8, rows: 2, key: 'claude' })
+  expect(await pictureIn(ui)).toEqual({ alt: IDLE, file: expect.stringMatching(PNG('lookUp')), format: 'png', columns: 8, rows: 2, key: 'claude-8' })
   expect(drawn.children?.[0]?.props).not.toHaveProperty('minWidth')
   // the state still names the scene: only the drawing gives it up
   expect(frames(w)).toEqual(['think1'])
@@ -1787,7 +2075,7 @@ test('each busy activity beside the spinner is its scene, 12 by 2; the footer me
   for (const [input, scene, alt, frame] of cases) {
     const id = await call($, w, input)
 
-    expect(await besideSpinner($, { mode: 'tool-use' }), scene).toEqual({ alt, file: expect.stringMatching(PNG(scene)), format: 'png', columns: 12, rows: 2, key: 'claude' })
+    expect(await besideSpinner($, { mode: 'tool-use' }), scene).toEqual({ alt, file: expect.stringMatching(PNG(scene)), format: 'png', columns: 12, rows: 2, key: 'claude-12' })
     expect(views(w).at(-1)?.frame, scene).toBe(frame)
     await done($, id, input.tool, input)
   }
@@ -1797,7 +2085,7 @@ test('each busy activity beside the spinner is its scene, 12 by 2; the footer me
   expect(await footerFrame($)).toBe('idle')
 })
 
-test('besideSpinner off: the footer draws each scene\'s solo frame, 8 by 2, and never a scene', { options: { gestures: false, besideSpinner: false }, plugins: [observer] }, async ($, on) => {
+test('besideSpinner off: the footer draws each scene\'s stand-in solo frame, 8 by 2, never a scene and never the hop', { options: { gestures: false, besideSpinner: false }, plugins: [observer] }, async ($, on) => {
   const w = world()
 
   stubs(on, w)
@@ -1822,7 +2110,8 @@ test('besideSpinner off: the footer draws each scene\'s solo frame, 8 by 2, and 
     }
   }
 
-  expect([...seen].sort()).toEqual(['blink', 'hop2', 'idle', 'lookDown', 'lookL', 'lookR'])
+  // the team scene's stand-in on the status row is a look toward the helpers, never its hop
+  expect([...seen].sort()).toEqual(['blink', 'idle', 'lookDown', 'lookL', 'lookR'])
 })
 
 test('the seat beside the spinner keeps a scene\'s width when a solo frame comes between scenes (the flinch), so the line holds its place', { plugins: [observer] }, async ($, on) => {
@@ -1842,7 +2131,9 @@ test('the seat beside the spinner keeps a scene\'s width when a solo frame comes
   const ui = await spinner($)
   const drawn = (await ui.drawn()) as { children?: { props?: Record<string, unknown> }[] }
 
-  expect(await pictureIn(ui)).toMatchObject({ alt: FLINCH, file: expect.stringMatching(PNG('flinch')), columns: 8, rows: 2 })
+  // a solo frame between scenes is another element than the scene (its key carries the width), so it
+  // is placed afresh and not where the 12-cell scene was
+  expect(await pictureIn(ui)).toMatchObject({ alt: FLINCH, file: expect.stringMatching(PNG('flinch')), columns: 8, rows: 2, key: 'claude-8' })
   // the seat stays 13 wide: the 8-cell flinch and five spaces, never a minWidth (it clipped him)
   expect(drawn.children?.[0]?.props).not.toHaveProperty('minWidth')
   expect((await ui.findAll({ type: 'Text' })).map(t => t.text)[0]).toBe(' '.repeat(5))
@@ -2293,7 +2584,7 @@ test('/coworker demo plays the whole tour in the band above the prompt, each ste
   await clock.advance(10_000)
   expect(demos(w)).toHaveLength(written)
   await run($, '')
-  expect(w.logs.at(-1)).toBe('/coworker demo plays every animation once, about a minute, in the band above the prompt')
+  expect(w.logs.at(-1)).toBe('/coworker demo plays every animation once, about two minutes, in the band above the prompt')
 })
 
 test('the band: the scene 12 by 2 in a seat a scene wide, then the spinner word and the frame, dim; solo frames 8 by 2 in the same seat; over what the mods beneath draw', { options: { gestures: false } }, async ($, on) => {
@@ -2326,7 +2617,7 @@ test('the band: the scene 12 by 2 in a seat a scene wide, then the spinner word 
   expect(blank).toMatchObject({ type: 'Text' })
   expect(label).toMatchObject({ type: 'Text', props: { dimColor: true, wrap: 'truncate' } })
   expect(below).toMatchObject({ type: 'Text' })
-  expect(band.picture).toEqual({ alt: IDLE, file: expect.stringMatching(PNG('think1')), format: 'png', columns: 12, rows: 2, key: 'demo' })
+  expect(band.picture).toEqual({ alt: IDLE, file: expect.stringMatching(PNG('think1')), format: 'png', columns: 12, rows: 2, key: 'demo-12' })
   expect(band.texts).toEqual([' ', ' ', 'Thinking · think1', 'beneath'])
 
   // Writing: the pen on the notepad, its alt the solo frame's braille (eyes down)
@@ -2341,6 +2632,9 @@ test('the band: the scene 12 by 2 in a seat a scene wide, then the spinner word 
 
   expect(wave).toMatchObject({ picture: { alt: WAVE, file: expect.stringMatching(PNG('wave1')), columns: 8, rows: 2 }, texts: [' '.repeat(5), ' ', 'greeting · wave1', 'beneath'] })
   expect(waveSeat?.props).not.toHaveProperty('minWidth')
+  // a picture of another width is another element (its key carries the width): under one key the solo
+  // frame kept the scene's placement and drew two cells right, cut at its box's edge
+  expect(wave.picture?.key).toBe('demo-8')
 
   // another surface, or a survey holding the band: only what lies beneath
   expect(await bandOf($, {}, 'desktop')).toMatchObject({ picture: undefined, texts: ['beneath'] })
@@ -2480,8 +2774,9 @@ test('reduced motion: the tour shows each act\'s first frame, one step per act',
 
   await start($)
   await run($, 'demo')
-  expect(w.logs.at(-1)).toMatch(/^demo: every animation by its first frame \(the animate option is off\), 30 acts in \d+s, /)
-  await clock.advance(80_000)
+  expect(w.logs.at(-1)).toMatch(new RegExp(`^demo: every animation by its first frame \\(the animate option is off\\), ${DEMO_ACTS} acts in \\d+s, `))
+  await clock.advance(70_000)
+  await clock.advance(70_000)
   expect(demos(w).map(step => step.frame)).toEqual([...demoSteps(false).map(step => step.frame), ''])
   expect(demos(w)).toHaveLength(DEMO_ACTS + 1)
 })

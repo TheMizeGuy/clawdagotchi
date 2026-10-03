@@ -78,12 +78,12 @@ class FrameContract(unittest.TestCase):
 
         self.assertEqual(self.solo, solo)
         self.assertEqual(self.scene, scene)
-        self.assertEqual((len(solo), len(scene)), (35, 38))
+        self.assertEqual((len(solo), len(scene)), (94, 38))
 
     def test_every_name_is_one_frame(self) -> None:
         names = [frame["name"] for frame in self.contract["frames"]]
 
-        self.assertEqual(len(names), 73)
+        self.assertEqual(len(names), 132)
         self.assertEqual(len(set(names)), len(names))
 
     def test_every_scene_names_a_solo_frame(self) -> None:

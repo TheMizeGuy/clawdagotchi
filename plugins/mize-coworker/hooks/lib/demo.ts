@@ -5,14 +5,17 @@
 // An act lasts about ACT_MS. A busy loop is shown as the spinner shows it (its
 // scene, with the scene a spinner word or mode puts in its place: sceneFor),
 // played whole as often as it takes to fill the act; a gesture plays for its
-// moment (MOMENT_MS); an idle move as the wander plays it; the breath and the
-// blink together; the sleep loops sped up to one pass in about ACT_MS (asleep,
-// a frame lasts 3 s). The words are the narration's own for a sample call, so
-// the tour says what the spinner would say. The whole tour runs about a minute.
+// moment (MOMENT_MS); an idle move as the wander plays it; the skits he
+// plays while he minds background agents, each once (the tally for three
+// agents, the plant through its four stages); the breath and the blink
+// together; the sleep loops sped up to one pass in about ACT_MS (asleep, a
+// frame lasts 3 s). The words are the narration's own for a sample call, so
+// the tour says what the spinner would say. The whole tour runs about two
+// minutes.
 
 import { MOMENT_MS, narration, toolWord } from './activity'
 import { BLINK, CHEER_LOOP, COLD_LOOP, LOOPS, sceneFor, TEAM_LOOPS, TICK_MS, type FrameName } from './sprite'
-import { moveSteps, type MoveKind } from './wander'
+import { GARDEN_STAGE_MS, moveSteps, type MoveDetail, type MoveKind } from './wander'
 
 /** One step of the tour: the frame, what it shows (a spinner word or a move's name), its act (0-based), how long it shows. */
 export type DemoStep = { frame: FrameName; label: string; act: number; ms: number }
@@ -73,10 +76,21 @@ function gesture(label: string, frames: readonly FrameName[], ms: number): Act {
 }
 
 /** An idle move as the wander plays it (a stroll as its walk, seven cells and the stop), whole, as often as it takes to fill ACT_MS. */
-function move(kind: MoveKind): Act {
-  const steps = kind === 'stroll' ? moveSteps('stroll', 0, 7) : moveSteps(kind, 0)
+function move(kind: MoveKind, detail: MoveDetail = {}): Act {
+  const steps = kind === 'stroll' ? moveSteps('stroll', 0, 7) : moveSteps(kind, 0, 0, detail)
 
   return looped(kind, steps.map(step => step.frame))
+}
+
+/** The garden through its four stages: each watered and admired, two ticks apiece, as the plant grows over a long wait. */
+function garden(): Act {
+  const frames = [0, ...GARDEN_STAGE_MS].flatMap(forMs => {
+    const steps = moveSteps('garden', 0, 0, { forMs }).map(step => step.frame)
+
+    return [...new Set(steps)].flatMap(frame => [frame, frame])
+  })
+
+  return { label: 'garden', steps: frames.map(frame => ({ frame, ms: TICK_MS })) }
 }
 
 /** Idle on the status row: a breath (idle and idleUp, sped up from 2 s a side) and a blink as it runs (BLINK). */
@@ -100,14 +114,21 @@ function asleep(label: string, loop: readonly FrameName[]): Act {
   return looped(label, loop, ticks * TICK_MS)
 }
 
-const MOVES: readonly MoveKind[] = ['stroll', 'look', 'hop', 'yawn', 'sip', 'sweat', 'clock', 'pumpkin']
+const MOVES: readonly MoveKind[] = ['stroll', 'look', 'hop', 'yawn', 'sip', 'sweat', 'clock', 'pumpkin', 'peek']
+/** The skits he plays while he minds background agents, in the tour's order (the garden has its own act). */
+const SKITS: readonly MoveKind[] = ['launch', 'tally', 'radar', 'radio', 'report', 'perch', 'conduct', 'juggle', 'gum', 'popcorn', 'plane', 'zen']
+const TIMED_SKITS: readonly MoveKind[] = ['lantern', 'lunch']
+/** The tour's tally shows three agents at work. */
+const DEMO_AGENTS = 3
 
 /**
  * The acts in order: every busy scene family as the spinner shows it (the
  * word- and mode-swapped ones included, and the team of one, two and three
  * helpers), then the greeting, the done hop, the cheer and the flinch, then
- * idle (the breath and the blink) and every idle move, then the warm and the
- * cold sleep.
+ * idle (the breath and the blink) and every idle move, then the skits of a
+ * Claude minding background agents (the send-off first, the plant through
+ * its stages, the night shift and the lunch last), then the warm and the cold
+ * sleep.
  */
 const ACTS: readonly Act[] = [
   busy(DEMO_WORDS.thinking, LOOPS.thinking, 'thinking'),
@@ -131,6 +152,9 @@ const ACTS: readonly Act[] = [
   gesture('oops', LOOPS.oops, MOMENT_MS.oops),
   idle(),
   ...MOVES.map(kind => move(kind)),
+  ...SKITS.map(kind => move(kind, { count: DEMO_AGENTS })),
+  garden(),
+  ...TIMED_SKITS.map(kind => move(kind)),
   asleep('asleep', LOOPS.asleep),
   asleep('asleep, cache cold', COLD_LOOP),
 ]

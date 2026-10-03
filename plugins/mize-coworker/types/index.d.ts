@@ -4,10 +4,12 @@
 /**
  * What Claude is shown doing: a tool family while a tool call is in flight or
  * just ended, `thinking` while the main loop's turn runs between tools,
- * `idle` when nothing happened for 8 s, `asleep` after 10 idle minutes; and
- * three short gestures: `greeting` (a wave when the session opens), `done` (a
- * hop when the main turn ends with an answer, a cheer after a long one) and
- * `oops` (a flinch when one of the main loop's own tool calls fails).
+ * `supervising` while the main loop rests and agents or workflows are at work
+ * in the background (he minds them: at ease, with skits of his own), `idle`
+ * when nothing is going on, `asleep` after 10 idle minutes; and three short
+ * gestures: `greeting` (a wave when the session opens), `done` (a hop when
+ * the main turn ends with an answer, a cheer after a long one) and `oops` (a
+ * flinch when one of the main loop's own tool calls fails).
  */
 export type CoworkerActivity =
   | 'thinking'
@@ -22,6 +24,7 @@ export type CoworkerActivity =
   | 'greeting'
   | 'done'
   | 'oops'
+  | 'supervising'
   | 'idle'
   | 'asleep'
 
@@ -30,8 +33,8 @@ export type CoworkerDoing = {
   activity: CoworkerActivity
   /**
    * The narration for a tool activity (`Reading register.ts`, `Running npm`,
-   * `Asking you`); empty for `thinking`, `idle` and `asleep`, which the
-   * spinner words from its own mode.
+   * `Asking you`); empty for `thinking`, `supervising`, `idle` and `asleep`,
+   * which the spinner words from its own mode.
    */
   word: string
 }
@@ -39,7 +42,7 @@ export type CoworkerDoing = {
 /** What the SessionMode hook (and, while a turn runs, the Spinner hook) draws: one frame of Claude and its caption. */
 export type CoworkerView = {
   /**
-   * The picture frame by name, one of the 73 in scripts/frames.json: its PNG
+   * The picture frame by name, one of the 132 in scripts/frames.json: its PNG
    * is assets/frames/<frame>.png. A scene frame (12 cells wide, a prop beside
    * Claude) is drawn only beside the spinner, where the spinner's word or mode
    * may put another scene in its place; the footer draws the solo frame the
@@ -52,7 +55,7 @@ export type CoworkerView = {
    * `alt` with it on. Several frames share a pose, so it names no frame.
    */
   sprite: string
-  /** The dim word to the sprite's left (`reading`, `needs you`); empty for none. */
+  /** The dim word to the sprite's left (`reading`, `needs you`, `3 agents`); empty for none. */
   caption: string
   /** True while asleep: the sprite and a trailing `z` are drawn muted. */
   isAsleep: boolean

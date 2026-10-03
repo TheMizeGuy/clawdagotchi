@@ -19,6 +19,14 @@ export const DECAY_MS = 8_000
 export const SLEEP_MS = 10 * 60_000
 /** A tool call (or permission ask) with no end after this long is forgotten. */
 export const FORGET_MS = 30 * 60_000
+/**
+ * No sign of a background agent for this long (no tool event of one, no stop
+ * that reported one) and Claude stops minding them: as long as he takes to
+ * fall asleep, so a quiet ten minutes ends in sleep either way.
+ */
+export const QUIET_MS = SLEEP_MS
+/** An agent last heard from this long ago no longer counts as one at work (its end never came). */
+export const SEEN_MS = 3 * 60_000
 /** At most this many tool calls are held in flight; the oldest is dropped. */
 export const MAX_CALLS = 200
 /** The longest spinner word, in characters. */
@@ -58,6 +66,15 @@ const ACTIVITY_OF_TOOL: ReadonlyMap<string, Activity> = new Map<string, Activity
 ])
 
 /**
+ * The background task types that are not agents: a shell or a monitor runs on
+ * with nobody thinking in it. Every other type (subagent, workflow, a type a
+ * later Claude Code adds) is agent work.
+ */
+const PASSIVE_TASK = /shell|bash|monitor|mcp/i
+/** A task status that says the task is over, should a report ever list one. */
+const ENDED_TASK = /^(completed|failed|killed|stopped|cancelled|canceled)$/i
+
+/**
  * The spinner words a scene beside the spinner keys on (sprite.ts sceneFor):
  * a web search's, a skill's, and the lead of an MCP call's (`Calling <server>`).
  */
@@ -77,6 +94,7 @@ const VERB: Readonly<Record<Activity, string>> = {
   greeting: '',
   done: '',
   oops: '',
+  supervising: '',
   idle: '',
   asleep: '',
 }
@@ -383,8 +401,52 @@ export function toolWord(tool: string, input: unknown): string {
   return VERB[activityOf(tool)] || 'Working'
 }
 
-/** One tool call in flight. */
-export type Call = { activity: Activity; word: string; startedAt: number }
+/**
+ * The loop of an agent whose id is not known. `classic.PreToolUse` carries no
+ * agent id (the end events do), so a call that starts while no turn of the
+ * main loop runs is some agent's, and is held under this name until it ends.
+ */
+export const SOME_AGENT = '?'
+
+/** One tool call in flight: `loop` is the agent that made it (SOME_AGENT when only that much is known), empty for the main loop. */
+export type Call = { activity: Activity; word: string; startedAt: number; loop: string }
+
+/**
+ * The session's background work as a stop hook reports it: the tasks that are
+ * agents at work (subagents, workflows), the ones that only run (shells,
+ * monitors), and whether a workflow is among them.
+ */
+export type Background = { agents: number; shells: number; hasWorkflow: boolean }
+
+/** No background work. */
+export const NO_BACKGROUND: Background = { agents: 0, shells: 0, hasWorkflow: false }
+
+/**
+ * A stop hook's `background_tasks` as counts. A task is read by its `type`
+ * alone (never its command or description): shells and monitors only run; any
+ * other type is agent work; one whose status says it is over is not counted.
+ */
+export function backgroundOf(tasks: readonly unknown[]): Background {
+  const out = { agents: 0, shells: 0, hasWorkflow: false }
+
+  for (const task of tasks) {
+    const type = isRecord(task) && typeof task.type === 'string' ? task.type : ''
+    const status = isRecord(task) && typeof task.status === 'string' ? task.status : ''
+
+    if (ENDED_TASK.test(status)) {
+      continue
+    }
+
+    if (PASSIVE_TASK.test(type)) {
+      out.shells += 1
+    } else {
+      out.agents += 1
+      out.hasWorkflow = out.hasWorkflow || /workflow/i.test(type)
+    }
+  }
+
+  return out
+}
 
 /** What the activity model holds; one per session, mutated by the functions below. */
 export type Model = {
@@ -397,8 +459,8 @@ export type Model = {
   turnEndedAt: number
   /** Tool calls in flight by tool_use_id, oldest first. */
   calls: Map<string, Call>
-  /** The last tool event (start or end) and when it came. */
-  last: { activity: Activity; word: string; at: number } | undefined
+  /** The last tool event (start or end), when it came and which loop's it was (empty: the main loop's). */
+  last: { activity: Activity; word: string; at: number; loop: string } | undefined
   /**
    * Permission dialogs that may still be open, by `<loop>|<tool>` (the loop is
    * the agent id, empty for the main loop): when each was raised. The API has
@@ -406,8 +468,16 @@ export type Model = {
    * ends (done, failed or denied) or its turn does.
    */
   asks: Map<string, number>
-  /** Background work the session reported at the main loop's last stop (shells, agents, workflows), and when. */
-  background: { count: number; at: number }
+  /** Background work the session reported at the last stop (agents and workflows, shells and monitors), and when. */
+  background: Background & { at: number }
+  /** The agents heard from and not yet ended: agent id -> when its last tool event came. */
+  agents: Map<string, number>
+  /** When an agent was last known to be at work (a tool event of one, a stop that reported some); 0 for never. */
+  agentsAt: number
+  /** When the present stretch of agent work began (the first sign after none); undefined while no agent is at work. */
+  agentsSince: number | undefined
+  /** When a background agent last finished, until the report it brings has been shown or has gone stale. */
+  report: number | undefined
   /**
    * A short gesture and when it ends. It shows over thinking, the decay and
    * idle; a permission ask or a call in flight shows instead. `isLong` marks
@@ -427,7 +497,11 @@ export function newModel(now: number): Model {
     calls: new Map(),
     last: undefined,
     asks: new Map(),
-    background: { count: 0, at: now },
+    background: { ...NO_BACKGROUND, at: now },
+    agents: new Map(),
+    agentsAt: 0,
+    agentsSince: undefined,
+    report: undefined,
     moment: undefined,
     oopsAt: -OOPS_EVERY_MS,
   }
@@ -469,39 +543,177 @@ function dropAsks(model: Model, loop: string): void {
   }
 }
 
-/** A subagent's or workflow agent's run ended: its asks go with it. */
-export function agentEnded(model: Model, agentId: string): void {
-  dropAsks(model, agentId)
+/** A sign that an agent is at work now: the stretch of agent work begins with the first. */
+function agentSign(model: Model, now: number): void {
+  model.agentsAt = Math.max(model.agentsAt, now)
+
+  if (model.agentsSince === undefined) {
+    model.agentsSince = now
+  }
+}
+
+/** Drops the calls in flight of one loop (an agent that ended), or of every agent. */
+function dropCalls(model: Model, isOf: (loop: string) => boolean): void {
+  for (const [id, call] of model.calls) {
+    if (isOf(call.loop)) {
+      model.calls.delete(id)
+    }
+  }
 }
 
 /**
- * What the session said is still running in the background when the main loop
- * stopped (or an agent did): while that is not nothing, calls in flight are
- * kept past the main turn's end and Claude neither idles nor sleeps.
+ * How an agent's run ended: when; whether the main loop was resting then (so
+ * the agent was one in the background, not one of a running main turn's
+ * own); and whether it ended with an answer (not stopped, not on an error).
  */
-export function backgroundSeen(model: Model, count: number, now: number): void {
-  model.background = { count: Math.max(0, Math.floor(count)), at: now }
+export type AgentEnd = { at: number; isResting: boolean; isAnswer: boolean }
+
+/**
+ * A subagent's or workflow agent's run ended: its asks and its calls in
+ * flight go with it and it no longer counts as at work. With `end`, the end
+ * is the last sign of agent work (the idle time runs from it, not from the
+ * agent's last tool event). One that ended while the main loop rested was a
+ * background agent: it is no longer one of the agent tasks last reported
+ * (unless a workflow is among them: a workflow is one task of many agents,
+ * so the count stands until the main loop's next stop), and when it ended
+ * with an answer it leaves a report for Claude to be brought: a helper with a
+ * page, shown while the report is fresh. An agent of a running main turn
+ * touches neither: that turn's own stop reads the count again.
+ */
+export function agentEnded(model: Model, agentId: string, end?: AgentEnd): void {
+  dropAsks(model, agentId)
+
+  if (agentId === '') {
+    return
+  }
+
+  dropCalls(model, loop => loop === agentId)
+  model.agents.delete(agentId)
+
+  if (end === undefined || !Number.isFinite(end.at)) {
+    return
+  }
+
+  model.agentsAt = Math.max(model.agentsAt, end.at)
+
+  if (!end.isResting) {
+    return
+  }
+
+  if (!model.background.hasWorkflow && model.background.agents > 0) {
+    model.background = { ...model.background, agents: model.background.agents - 1 }
+  }
+
+  if (end.isAnswer) {
+    model.report = end.at
+  }
 }
 
 /**
- * True while the last tool event still shows with no turn running: it came
- * after the main turn ended (an agent working in the background) and within
- * DECAY_MS. The main turn's own last call does not linger once the turn is over.
+ * What the session said is still running in the background when a loop
+ * stopped. Shells and monitors keep nothing busy; agents and workflows are
+ * agent work. The main loop's stop (`isMain`) is the word on it, taken when
+ * none of its own calls or agents can still run. Agents there are a sign of
+ * agent work now, and every call still in flight is one of theirs (a call an
+ * agent started while the main turn ran was held as the main loop's, for
+ * want of an agent id): held as some agent's from here on. None there means
+ * no agent is at work: every call in flight and the agents heard from are
+ * dropped (one that was killed leaves no end event). An agent's own stop can
+ * only lower the count (its siblings may be the main turn's own, gone with an
+ * interrupt, so it never raises it).
+ */
+export function backgroundSeen(model: Model, background: Background, now: number, isMain = true): void {
+  const agents = Math.max(0, Math.floor(background.agents))
+  const shells = Math.max(0, Math.floor(background.shells))
+
+  if (!isMain) {
+    const fewer = Math.min(model.background.agents, agents)
+
+    model.background = { agents: fewer, shells, hasWorkflow: model.background.hasWorkflow && fewer > 0, at: model.background.at }
+
+    return
+  }
+
+  model.background = { agents, shells, hasWorkflow: background.hasWorkflow && agents > 0, at: now }
+
+  if (agents > 0) {
+    agentSign(model, now)
+
+    for (const call of model.calls.values()) {
+      if (call.loop === '') {
+        call.loop = SOME_AGENT
+      }
+    }
+  } else {
+    model.agents.clear()
+    model.calls.clear()
+  }
+}
+
+/** True when anything says an agent may be at work (a cheap check, before the clock is read to ask agentsAtWork). */
+export function hasAgentSigns(model: Model): boolean {
+  return model.background.agents > 0 || model.agents.size > 0
+}
+
+/**
+ * True while agents are at work as far as the session has said: a call of
+ * one is in flight (its id known or not), or one was heard from (or a stop
+ * reported some) within QUIET_MS and none of that has been taken back (an
+ * agent's end, a main stop that reported none).
+ */
+export function agentsAtWork(model: Model, now: number): boolean {
+  for (const call of model.calls.values()) {
+    if (call.loop !== '') {
+      return true
+    }
+  }
+
+  return (model.background.agents > 0 || model.agents.size > 0) && now - model.agentsAt < QUIET_MS
+}
+
+/**
+ * How many agents are at work, as near as the events say: the agents with a
+ * call in flight or heard from within SEEN_MS, or the agent tasks the last
+ * stop reported when that is more (a workflow is one task of several agents;
+ * a quiet agent is still a task). At least 1.
+ */
+export function agentCount(model: Model, now: number): number {
+  const ids = new Set<string>()
+
+  for (const [id, at] of model.agents) {
+    if (now - at < SEEN_MS) {
+      ids.add(id)
+    }
+  }
+
+  for (const call of model.calls.values()) {
+    if (call.loop !== '' && call.loop !== SOME_AGENT) {
+      ids.add(call.loop)
+    }
+  }
+
+  return Math.max(1, ids.size, model.background.agents)
+}
+
+/**
+ * True while the last tool event still shows with no turn running: it was
+ * the main loop's own, came after its turn ended and within DECAY_MS. The
+ * main turn's own last call does not linger once the turn is over, and an
+ * agent's events show as `supervising`, not as a decay.
  */
 function isDecaying(model: Model, now: number): boolean {
-  return model.last !== undefined && model.last.at > model.turnEndedAt && now - model.last.at < DECAY_MS
-}
-
-/** True while background work was reported and something has been heard from the session within FORGET_MS. */
-function hasBackground(model: Model, now: number): boolean {
-  return model.background.count > 0 && now - Math.max(model.background.at, model.last?.at ?? 0) < FORGET_MS
+  return model.last !== undefined && model.last.loop === '' && model.last.at > model.turnEndedAt && now - model.last.at < DECAY_MS
 }
 
 /**
  * The main loop's turn ended. Its own calls cannot still run, and an interrupt
- * or an API error may leave a call with no end event, so the calls in flight
- * are dropped, unless the session reported background work: then they may be
- * an agent's and stay (FORGET_MS still bounds them).
+ * or an API error may leave a call with no end event, so the calls held as
+ * its own are dropped (after a stop that reported agents none is left held
+ * so: backgroundSeen). Calls held as an agent's stay while the session's last
+ * stop reported agents in the background; with none reported, only those of
+ * some agent that started between main turns stay (they cannot be this
+ * turn's), and the agents heard from are forgotten (an interrupt ends the
+ * main loop's own agents with no end event). FORGET_MS bounds what stays.
  * A turn that ended with an answer (not interrupted, no error) gets a hop, or
  * a cheer when it ran LONG_TURN_MS or more: `durationMs` as the engine
  * measured it, else from the turn's start as recorded here.
@@ -520,8 +732,11 @@ export function turnEnded(model: Model, now: number, isAnswered = false, duratio
   model.turnEndedAt = now
   dropAsks(model, '')
 
-  if (!hasBackground(model, now)) {
-    model.calls.clear()
+  if (model.background.agents > 0) {
+    dropCalls(model, loop => loop === '')
+  } else {
+    dropCalls(model, loop => loop !== SOME_AGENT)
+    model.agents.clear()
   }
 
   model.moment = isAnswered ? { kind: 'done', until: now + (isLong ? MOMENT_MS.cheer : MOMENT_MS.done), isLong } : undefined
@@ -549,8 +764,14 @@ export function teamSize(model: Model): 1 | 2 | 3 {
   return count >= 3 ? 3 : count === 2 ? 2 : 1
 }
 
-/** Drops calls (and an ask) older than FORGET_MS: their end event never came. */
+/** Drops calls (and an ask) older than FORGET_MS, and agents not heard from for QUIET_MS: their end event never came. */
 function forget(model: Model, now: number): void {
+  for (const [id, at] of model.agents) {
+    if (now - at >= QUIET_MS) {
+      model.agents.delete(id)
+    }
+  }
+
   for (const [id, call] of model.calls) {
     if (now - call.startedAt < FORGET_MS) {
       break
@@ -566,9 +787,18 @@ function forget(model: Model, now: number): void {
   }
 }
 
-/** classic.PreToolUse let a call through: it is in flight until its PostToolUse or PostToolUseFailure. */
-export function toolStarted(model: Model, id: string, tool: string, input: unknown, now: number): void {
-  const call: Call = { activity: activityOf(tool), word: toolWord(tool, input), startedAt: now }
+/**
+ * classic.PreToolUse let a call through: it is in flight until its
+ * PostToolUse or PostToolUseFailure. `loop` is the agent id of the loop that
+ * made it where the event says (today it never does); with none, a call that
+ * starts while a turn of the main loop runs is taken for the main loop's (or
+ * one of its agents', as before), and one that starts with no such turn is
+ * some agent's (SOME_AGENT): the main loop calls nothing between its turns.
+ * An agent's call is a sign of it at work.
+ */
+export function toolStarted(model: Model, id: string, tool: string, input: unknown, now: number, loop = ''): void {
+  const owner = loop !== '' ? loop : model.isTurnRunning ? '' : SOME_AGENT
+  const call: Call = { activity: activityOf(tool), word: toolWord(tool, input), startedAt: now, loop: owner }
 
   forget(model, now)
   model.calls.delete(id)
@@ -584,7 +814,25 @@ export function toolStarted(model: Model, id: string, tool: string, input: unkno
   }
 
   model.calls.set(id, call)
-  model.last = { activity: call.activity, word: call.word, at: now }
+  model.last = { activity: call.activity, word: call.word, at: now, loop: owner }
+  heardFrom(model, owner, now)
+}
+
+/**
+ * An agent's tool event: agents are at work as of `now`, and the agent, when
+ * its id is known, is one of them. The main loop's (an empty `loop`) says
+ * nothing of agents.
+ */
+function heardFrom(model: Model, loop: string, now: number): void {
+  if (loop === '') {
+    return
+  }
+
+  if (loop !== SOME_AGENT) {
+    model.agents.set(loop, now)
+  }
+
+  agentSign(model, now)
 }
 
 /**
@@ -594,12 +842,15 @@ export function toolStarted(model: Model, id: string, tool: string, input: unkno
  */
 export function toolEnded(model: Model, id: string, tool: string, input: unknown, now: number, loop = ''): void {
   const call = model.calls.get(id)
+  // the end event names the agent; without a name, a call held as some agent's stays one
+  const owner = loop !== '' ? loop : (call?.loop ?? '')
 
   model.calls.delete(id)
   model.last = call === undefined
-    ? { activity: activityOf(tool), word: toolWord(tool, input), at: now }
-    : { activity: call.activity, word: call.word, at: now }
+    ? { activity: activityOf(tool), word: toolWord(tool, input), at: now, loop: owner }
+    : { activity: call.activity, word: call.word, at: now, loop: owner }
   model.asks.delete(askKey(loop, tool))
+  heardFrom(model, owner, now)
 }
 
 /**
@@ -621,23 +872,52 @@ function newestCall(model: Model): Call | undefined {
   return newest
 }
 
-/** When Claude went (or goes) idle: the latest of start, turn end and last tool event plus the decay. */
+/**
+ * When Claude went (or goes) idle: the latest of start, turn end, the main
+ * loop's last late tool event plus the decay, and the last sign of an agent
+ * at work.
+ */
 export function idleSince(model: Model): number {
-  const lastShown = model.last !== undefined && model.last.at > model.turnEndedAt ? model.last.at + DECAY_MS : 0
+  const lastShown = model.last !== undefined && model.last.loop === '' && model.last.at > model.turnEndedAt ? model.last.at + DECAY_MS : 0
 
-  return Math.max(model.startedAt, model.turnEndedAt, lastShown)
+  return Math.max(model.startedAt, model.turnEndedAt, lastShown, model.agentsAt)
+}
+
+/** The gesture still showing at `now`, if any; one that has run out is cleared. */
+function momentAt(model: Model, now: number): CoworkerDoing | undefined {
+  if (model.moment === undefined) {
+    return undefined
+  }
+
+  if (now < model.moment.until) {
+    return { activity: model.moment.kind, word: '' }
+  }
+
+  model.moment = undefined
+
+  return undefined
 }
 
 /**
- * The shown activity: a pending permission ask; else the most recently
- * started call in flight; else a gesture still running; else `thinking` while
- * the main turn runs; else the last tool event's activity within DECAY_MS when
- * it came after the main turn ended (an agent in the background); else
- * `delegating` while the session has background work; else idle, asleep after
- * SLEEP_MS.
+ * The shown activity. A pending permission ask comes first. Then, while the
+ * main loop is at work (`isResting` false: its turn runs and its spinner is
+ * drawn): the most recently started call in flight, else a gesture still
+ * running, else `thinking`. While it rests (no turn, or a turn left open with
+ * no spinner drawn, as between a /goal's iterations): a gesture still running
+ * (the hop at the turn's end plays out first), else `supervising` while
+ * agents are at work in the background, else the most recently started call
+ * in flight, else `thinking` while the turn is open, else the main loop's
+ * last late tool event within DECAY_MS, else idle, asleep after SLEEP_MS.
+ * Background shells keep nothing busy.
  */
-export function shown(model: Model, now: number): CoworkerDoing {
+export function shown(model: Model, now: number, isResting = !model.isTurnRunning): CoworkerDoing {
   forget(model, now)
+
+  const isAtWork = agentsAtWork(model, now)
+
+  if (!isAtWork) {
+    model.agentsSince = undefined
+  }
 
   if (model.asks.size > 0) {
     return { activity: 'asking', word: VERB.asking }
@@ -645,16 +925,26 @@ export function shown(model: Model, now: number): CoworkerDoing {
 
   const newest = newestCall(model)
 
-  if (newest !== undefined) {
-    return { activity: newest.activity, word: newest.word }
-  }
-
-  if (model.moment !== undefined) {
-    if (now < model.moment.until) {
-      return { activity: model.moment.kind, word: '' }
+  if (!isResting) {
+    if (newest !== undefined) {
+      return { activity: newest.activity, word: newest.word }
     }
 
-    model.moment = undefined
+    return momentAt(model, now) ?? { activity: 'thinking', word: '' }
+  }
+
+  const moment = momentAt(model, now)
+
+  if (moment !== undefined) {
+    return moment
+  }
+
+  if (isAtWork) {
+    return { activity: 'supervising', word: '' }
+  }
+
+  if (newest !== undefined) {
+    return { activity: newest.activity, word: newest.word }
   }
 
   if (model.isTurnRunning) {
@@ -665,21 +955,20 @@ export function shown(model: Model, now: number): CoworkerDoing {
     return { activity: model.last.activity, word: model.last.word }
   }
 
-  if (hasBackground(model, now)) {
-    return { activity: 'delegating', word: '' }
-  }
-
   return { activity: now - idleSince(model) >= SLEEP_MS ? 'asleep' : 'idle', word: '' }
 }
 
 /**
  * Milliseconds until the shown activity can change with no event: a call or
- * ask being forgotten, the decay ending, or falling asleep. Undefined when only
- * an event can change it (a turn runs, or Claude is asleep).
+ * ask being forgotten, a gesture or the decay ending, the agents going quiet
+ * (QUIET_MS after their last sign, once none of their calls is in flight), or
+ * falling asleep. Undefined when only an event can change it (a turn runs, or
+ * Claude is asleep).
  */
 export function nextChangeIn(model: Model, now: number): number | undefined {
   forget(model, now)
   const due: number[] = []
+  const isAtWork = agentsAtWork(model, now)
 
   for (const at of model.asks.values()) {
     due.push(at + FORGET_MS)
@@ -695,12 +984,21 @@ export function nextChangeIn(model: Model, now: number): number | undefined {
     due.push(model.moment.until)
   }
 
-  if (model.asks.size === 0 && model.calls.size === 0 && !model.isTurnRunning) {
+  let hasAgentCall = false
+
+  for (const call of model.calls.values()) {
+    hasAgentCall = hasAgentCall || call.loop !== ''
+  }
+
+  if (isAtWork && !hasAgentCall) {
+    // minding the agents until nothing has been heard of them for QUIET_MS (a call of theirs in
+    // flight keeps them at work for as long as it is held)
+    due.push(model.agentsAt + QUIET_MS)
+  }
+
+  if (model.asks.size === 0 && model.calls.size === 0 && !model.isTurnRunning && !isAtWork) {
     if (model.last !== undefined && isDecaying(model, now)) {
       due.push(model.last.at + DECAY_MS)
-    } else if (hasBackground(model, now)) {
-      // delegating until nothing has been heard for FORGET_MS
-      due.push(Math.max(model.background.at, model.last?.at ?? 0) + FORGET_MS)
     } else {
       const sleepAt = idleSince(model) + SLEEP_MS
 
@@ -767,6 +1065,8 @@ export type StatusInput = {
   doing: CoworkerDoing
   /** How long the current busy or idle stretch has lasted. */
   forMs: number
+  /** While he minds background agents: how many are at work. */
+  agents?: number
   /** The `/coworker demo` tour under way: which act (1-based) of how many, and what it shows. */
   demo?: { act: number; of: number; label: string }
 }
@@ -784,6 +1084,7 @@ const PHRASE: Readonly<Record<Activity, string>> = {
   greeting: 'saying hi',
   done: 'done with the turn',
   oops: 'wincing at a failed call',
+  supervising: 'minding the agents',
   idle: 'idle',
   asleep: 'asleep',
 }
@@ -793,7 +1094,7 @@ function onOff(isOn: boolean): string {
 }
 
 /** The /coworker demo line of the status: the tour under way, or what the command does. */
-export const DEMO_HINT = '/coworker demo plays every animation once, about a minute, in the band above the prompt'
+export const DEMO_HINT = '/coworker demo plays every animation once, about two minutes, in the band above the prompt'
 
 /**
  * The /coworker status: one line of switches, one of what Claude is doing and
@@ -811,7 +1112,12 @@ export function statusText(input: StatusInput): string {
   const isIdle = input.doing.activity === 'idle' || input.doing.activity === 'asleep'
   const demo = input.demo === undefined ? DEMO_HINT : `demo playing: ${input.demo.act} of ${input.demo.of}, ${input.demo.label}; /coworker demo again stops it`
 
-  return `${first}\nClaude is ${PHRASE[input.doing.activity]} (${isIdle ? 'idle' : 'busy'} for ${formatDuration(input.forMs)})\n${demo}`
+  const phrase =
+    input.doing.activity === 'supervising' && input.agents !== undefined
+      ? `minding ${input.agents} agent${input.agents === 1 ? '' : 's'} in the background`
+      : PHRASE[input.doing.activity]
+
+  return `${first}\nClaude is ${phrase} (${isIdle ? 'idle' : 'busy'} for ${formatDuration(input.forMs)})\n${demo}`
 }
 
 export type CommandVerb = 'status' | 'on' | 'off' | 'demo' | 'unknown'
