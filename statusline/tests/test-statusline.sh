@@ -146,8 +146,16 @@ for SH in "$(command -v bash)" /bin/bash; do
   o="$(pay | line 95 | plain)"
   expect "$t: chips: at 95 the line fills its 91 cells exactly" "91" "${#o}"
   expect "$t: chips: the ✻ goes before the effort" "[Fable 5.1 xhigh] [ctx 52%] [5h 20%]" "$(pay | line 40 | pp)"
-  expect "$t: chips: 80 columns keeps the essentials, the bare windows paired" "[✻ Fable 5.1 xhigh] [ctx ▬▬▬▬▬▬▬▬▬▬ 52%] [5h 20% 7d 30%] [/nowhere/project]" "$(pay | line 80 | pp)"
-  expect "$t: flat: 80 columns keeps the essentials" "✻ Fable 5.1 xhigh │ ctx ▬▬▬▬▬▬▬▬▬▬ 52% │ 5h 20% · 7d 30% │ /nowhere/project" "$(pay | STYLE=flat line 80 | pp)"
+  # The time until the 5h window resets is the owner's priority (2026-10-03): it outlives every
+  # other detail. The week's countdown, the ✻, the effort and then the gauge go before it; only
+  # the model's name, the place, the percentages and a loud bus segment outlive it.
+  expect "$t: chips: 80 columns keeps the gauge and the 5h countdown: the ✻ and the effort went for them" "[Fable 5.1] [ctx ▬▬▬▬▬▬▬▬▬▬ 52%] [5h 20% ↻2h30m · 7d 30%] [/nowhere/project]" "$(pay | line 80 | pp)"
+  expect "$t: flat: 80 columns keeps the gauge and the 5h countdown" "Fable 5.1 │ ctx ▬▬▬▬▬▬▬▬▬▬ 52% │ 5h 20% ↻2h30m · 7d 30% │ /nowhere/project" "$(pay | STYLE=flat line 80 | pp)"
+  expect "$t: chips: the week's countdown goes long before the 5h one" "[✻ Fable 5.1 xhigh] [ctx ▬▬▬▬▬▬▬▬▬▬ 52%] [5h 20% ↻2h30m · 7d 30%] [/nowhere/project]" "$(pay | line 88 | pp)"
+  expect "$t: chips: the 5h countdown outlives the gauge" "[Fable 5.1] [ctx 52%] [5h 20% ↻2h30m · 7d 30%] [/nowhere/project]" "$(pay | line 72 | pp)"
+  expect "$t: flat: the 5h countdown outlives the gauge" "Fable 5.1 │ ctx 52% │ 5h 20% ↻2h30m · 7d 30% │ /nowhere/project" "$(pay | STYLE=flat line 70 | pp)"
+  expect "$t: chips: the place outlives the countdown, the bare windows paired" "[Fable 5.1] [ctx 52%] [5h 20% 7d 30%] [/nowhere/project]" "$(pay | line 60 | pp)"
+  expect "$t: flat: very narrow, the countdown comes back before the effort does" "Fable 5.1 │ ctx 52% │ 5h 20% ↻2h30m" "$(pay | STYLE=flat line 40 | pp)"
   has "$t: used/size follows the percent" "ctx ▬▬▬▬▬▬▬▬▬▬ 52% 523k/1M ·" "$(pay | line 200 | pp)"
   has "$t: with less room the size alone" "ctx ▬▬▬▬▬▬▬▬▬▬ 52% 1M]" "$(pay | line 100 | pp)"
   has "$t: a 200k window" "ctx ▬▬▬▬▬▬▬▬▬▬ 52% 104k/200k" "$(pay '.context_window.context_window_size=200000 | .context_window.total_input_tokens=104600' | line 200 | pp)"
@@ -162,13 +170,29 @@ for SH in "$(command -v bash)" /bin/bash; do
   rm -f "$CACHE"; printf '2000500000\t11\t2000003000\t26\t2000500000\t%s\n' $(( NOW - 120 )) > "$CACHE"
   own='.session_id="own" | .workspace={"current_dir":"/Users/x/Dev/Limerino","project_dir":"/Users/x/Dev/Limerino","repo":{"name":"Limerino"}} | .context_window={"total_input_tokens":390000,"context_window_size":1000000,"used_percentage":39.2} | .rate_limits.five_hour={"used_percentage":69,"resets_at":2000010800} | .rate_limits.seven_day={"used_percentage":67,"resets_at":2000345600}'
   o="$(pay "$own" | line 95 "$O" | pp)"
-  expect "$t: chips at 95 with the reserve: spark, model, effort, gauge, 1M, both marked windows, place and branch" \
-    "[✻ Fable 5.1 xhigh] [ctx ▬▬▬▬▬▬▬▬▬▬ 39% 1M] [5h 69%↗ 7d 67%↗] [Limerino ⎇ main]" "$o"
+  expect "$t: chips at 95 with the reserve: model, effort, gauge, both marked windows, the 5h countdown, place and branch" \
+    "[Fable 5.1 xhigh] [ctx ▬▬▬▬▬▬▬▬▬▬ 39%] [5h 69%↗ ↻3h · 7d 67%↗] [Limerino ⎇ main]" "$o"
   o="$(pay "$own" | line 95 "$O" | plain)"; [ "${#o}" -le 81 ] && ok || bad "$t: and within its 81 cells" "${#o}"
-  o="$(pay "$own" | line 93 "$O" | plain)"
-  expect "$t: chips: with the branch glyph the count is still exact (93 columns: 79 cells)" "79" "${#o}"
+  o="$(pay "$own" | line 94 "$O" | plain)"
+  expect "$t: chips: with the branch glyph the count is still exact (94 columns: 80 cells)" "80" "${#o}"
   o="$(pay "$own" | STYLE=flat line 95 "$O" | plain)"; [ "${#o}" -le 81 ] && ok || bad "$t: flat at 95 with the reserve fits 81 cells" "${#o}: $o"
   has "$t: flat keeps the gauge and the size there too" "ctx ▬▬▬▬▬▬▬▬▬▬ 39% 1M │" "$o"
+  has "$t: and the 5h countdown" "│ 5h 69%↗ ↻3h · 7d 67%↗ │" "$o"
+  # 99 columns (the owner's windows on 2026-10-03), the reserve 11 below 110: 84 cells, in a
+  # repo with dirty and ahead counts. Before, the counts stayed and the row never said when the
+  # window resets; now the countdown stays and the counts and the size go.
+  ownrow() { rm -f "$CACHE"; printf '2000500000\t11\t2000003000\t26\t2000500000\t%s\n' $(( NOW - 120 )) > "$CACHE"; pay "$own${2:+ | $2}" | line "$1" "$O" | pp; }
+  owngit() { printf '%s\n%s\n%s\n' "$NOW" "/Users/x/Dev/Limerino" "$(printf '/Users/x/Dev/Limerino\037/Users/x/Dev/Limerino/.git\037/Users/x/Dev/Limerino/.git\037%s\037%s\037%s\0370' "$1" "$2" "$3")" > "$O/git/own"; }
+  printf '22\t11\t110\n' > "$O/bus/own/.reserve"; owngit main 3 2
+  expect "$t: chips at 99 with the reserve: the 5h countdown outlives the dirty counts and the size" \
+    "[✻ Fable 5.1 xhigh] [ctx ▬▬▬▬▬▬▬▬▬▬ 39%] [5h 69%↗ ↻3h · 7d 67%↗] [Limerino ⎇ main]" "$(ownrow 99)"
+  expect "$t: a longer countdown takes the ✻'s cells, not the gauge's" \
+    "[Fable 5.1 xhigh] [ctx ▬▬▬▬▬▬▬▬▬▬ 39%] [5h 69%↗ ↻2h37m · 7d 67%↗] [Limerino ⎇ main]" "$(ownrow 99 '.rate_limits.five_hour.resets_at=2000009420')"
+  owngit feature/statusline-ladder 0 0
+  expect "$t: a long branch: the gauge goes, the countdown and the branch stay" \
+    "[Fable 5.1] [ctx 39%] [5h 69%↗ ↻3h · 7d 67%↗] [Limerino ⎇ feature/statusline-ladder]" "$(ownrow 99)"
+  expect "$t: and the branch outlives the countdown where both cannot stay" \
+    "[Fable 5.1] [ctx 39%] [5h 69%↗ 7d 67%↗] [Limerino ⎇ feature/statusline-ladder]" "$(ownrow 95)"
   rm -f "$CACHE"
 
   # --- model flags ---
@@ -274,6 +298,7 @@ for SH in "$(command -v bash)" /bin/bash; do
   for STYLE in chips flat; do
     has "$t: $STYLE: the gauge outlives alt even when this account is over pace" "▬" "$(pay '.rate_limits.five_hour={"used_percentage":50,"resets_at":2000014400}' | line 90 | plain)"
     hasnt "$t: $STYLE: and alt is what went" "alt" "$(pay '.rate_limits.five_hour={"used_percentage":50,"resets_at":2000014400}' | line 90 | plain)"
+    has "$t: $STYLE: the 5h countdown outlives alt too" "5h 50%↗ ↻4h" "$(pay '.rate_limits.five_hour={"used_percentage":50,"resets_at":2000014400}' | line 90 | plain)"
   done
   unset STYLE
   rm -f "$CACHE"

@@ -85,7 +85,7 @@ Type `/coworker demo` at the prompt and he runs through every scene and every mo
 - segments other plugins publish on the status bus, warnings in yellow and failures in red
 - the session's cost
 
-As the terminal narrows, pieces drop in a fixed order, and the context gauge outlasts the countdowns and the other account. The colors are Catppuccin Mocha.
+As the terminal narrows, pieces drop in a fixed order. The context gauge and the countdown to the 5-hour reset outlast every other detail: the week's countdown, the other account, the dirty counts, the `✻` and the effort all go first, and in a row too short for both the gauge goes and the countdown stays. The colors are Catppuccin Mocha.
 
 The line does two jobs for Claude. From a session's very first render it keeps his cells free at the right end of the row (the `.reserve` and `.reserve-default` files), and it writes the `.vitals` file he reacts to.
 

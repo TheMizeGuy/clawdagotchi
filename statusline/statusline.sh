@@ -25,7 +25,8 @@
 #   5h, 7d   Max-plan usage windows. Judged by PACE, not by the bare percent: the projection at
 #            the reset if the window keeps its average burn. ↗ marks a window on pace to run
 #            dry before it resets (yellow; peach from 90% used; red once spent). ↻<eta> is
-#            when the window resets
+#            when the window resets. The 5h one is the owner's priority (2026-10-03): in a
+#            short row it outlives every other detail, the context gauge included
 #   alt      the other Max account's 5h and 7d use, from the shared cache (which account has room)
 #   where    repo, branch (an OSC 8 link to the open PR), dirty count, ahead/behind; a path
 #            outside git
@@ -678,14 +679,17 @@ if [ "$cols" -gt 0 ]; then
     [ "${#rsv}" -gt 2 ] && rsv=40; [ "$rsv" -gt 40 ] && rsv=40
   fi
   max=$(( cols - 4 - rsv )); [ "$max" -lt 1 ] && max=1
-  # What needs attention outlives what does not: a quiet cache, a calm window's countdown and
-  # the bus's info segments go early; an urgent cache, a window over pace and the bus's
-  # warnings and failures go late. The context bar outlives every countdown, the other account
-  # and the cache: the owner reads it first, and in a 95-column window the old order (bar
-  # before those) ended up dropping the bar and giving the smaller pieces back. Only the model,
-  # the place, the windows' percentages and the bus's loudest segment outlive it. bus:2 keeps
-  # the warnings and failures (or nothing, if the bus holds only info); bus:1 the loudest one
-  # alone.
+  # What needs attention outlives what does not: a quiet cache, the week's countdown and the
+  # bus's info segments go early; an urgent cache, a window over pace and the bus's warnings
+  # and failures go late. Two details are the owner's priorities and outlive all the others:
+  # the context bar, which the owner reads first (in a 95-column window an older order dropped
+  # the bar and gave the smaller pieces back), and above it the time until the 5h window resets
+  # (h5:1; 2026-10-03: it used to go with the week's countdown, before the dirty counts, and a
+  # 99-column row in a repo never showed it). So the dirty counts, the other account, the
+  # cache, the ✻ and the effort all go before the bar, and the bar before the 5h countdown.
+  # Only the model's name, the place with its branch, the windows' percentages and the bus's
+  # loudest segment outlive the countdown. bus:2 keeps the warnings and failures (or nothing,
+  # if the bus holds only info); bus:1 the loudest one alone.
   cq="cache:0"; cu=""; cz=""; [ "$cache_urgent" -eq 1 ] && { cq=""; cu="cache:1"; cz="cache:0"; }
   aq="alt:0"; au=""; [ "$hot" -eq 1 ] && { aq=""; au="alt:0"; }
   # a calm window is hidden before the context; one on pace to run dry outlives everything but the model
@@ -693,9 +697,9 @@ if [ "$cols" -gt 0 ]; then
   d7q="d7:0"; [ "$ST_d7" = "calm" ] || d7q=""
   undo=""
   # The context's size suffix and used/size are its first details to go (ctx:3, ctx:2); the ✻
-  # is the row's bookend and goes just before the effort (model:2), so it does not come and go
-  # with the smaller pieces.
-  for step in cost:1 cost:0 model:3 ctx:3 ctx:2 $cq $aq loc:3 bus:2 d7:1 h5:1 loc:2 $au $cu ctx:1 model:2 model:1 loc:1 \
+  # is the row's bookend and goes just before the effort (model:2), after every smaller piece,
+  # so it comes and goes only where the bar or the 5h countdown needs its two cells.
+  for step in cost:1 cost:0 model:3 ctx:3 ctx:2 $cq $aq loc:3 bus:2 d7:1 loc:2 $au $cu model:2 model:1 ctx:1 h5:1 loc:1 \
               $cz loc:0 bus:1 $d7q $h5q ctx:0 bus:0 d7:0 h5:0; do
     width; [ "$W" -le "$max" ] && break
     id="${step%%:*}"; fl="${step##*:}"; n="LV_$id"
