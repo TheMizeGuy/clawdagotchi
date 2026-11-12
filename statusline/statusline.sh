@@ -1,76 +1,98 @@
 #!/usr/bin/env bash
 # Claude Code status line (the statusLine command in ~/.claude/settings.json). One row, always.
 #
-#   (✻ Fable 5.1 xhigh) (ctx ▬▬▬▬▬▬▬▬▬▬ 52% 523k/1M · cache 42m) (5h 43% ↻2h39m · 7d 57%↗ ↻6d8h · alt 11% 26%) (Limerino ⎇ main *3 ↑2) (agents 7/40) ($12/5h · $44)
+#   (✻ Fable 5.2) (ctx ▬▬▬▬▬▬▬▬▬▬ 52% · cache 42m) (acct1 · 7d 57% fable 62% · 4 left) (Limerino ⎇ main *3 ↑2) (agents 7/60) ($44)
 #
 # Two looks. STATUSLINE_STYLE picks one (chips or flat); unset, chips in Ghostty, flat elsewhere.
 #   chips  each group is a rounded chip, drawn above as ( ): the caps U+E0B6 and U+E0B4 (Ghostty
 #          draws both itself) in the chip's ground color, the content on that ground (#262637),
-#          one space between chips. A bus warning or failure gets a chip of its own tint. The
-#          branch glyph is U+E0A0, drawn above as ⎇. The ✻ in Claude orange is the row's left
-#          bookend; mize-coworker's Claude at the right end is the other one.
+#          one space between chips. A bus warning or failure gets a chip of its own tint, and
+#          so does a group whose worst piece is over or spent (watch is the text's color
+#          alone). The branch glyph is U+E0A0, drawn above as ⎇. The ✻ in Claude orange is the
+#          row's left bookend; mize-coworker's Claude at the right end is the other one.
 #   flat   for terminals that do not draw the caps: groups split by │ rails, no private-use glyph
-#          (the branch glyph is left out); the same gauge, ✻ and size suffix.
+#          (the branch glyph is left out), no grounds; the same gauge and ✻.
 #
 # Groups, left to right (pieces drop by priority when COLUMNS is short; nothing ever wraps):
-#   model    ✻, model name and reasoning effort, plus a red flag only when something is
-#            off-nominal (fast mode on, thinking off), an --agent name, a non-default output style
+#   model    ✻ and the model name, plus only what is off-nominal: a red flag (fast mode on,
+#            thinking off), an effort other than the standing one, an --agent name, a
+#            non-default output style
 #   ctx      context window: a ten-cell gauge whose filled cells run a gradient that warms as the
 #            window fills (blue to mauve; lavender to peach from 70%; yellow to red from 90%), the
 #            cell the fill ends in blended into the track as far as it is filled; the percent;
-#            the window size (1M), or used/size (523k/1M) where there is room
+#            the window's size only when it is not the 1M one
 #   cache    prompt cache: minutes until the cached prefix goes cold (quiet), a warning in the
 #            last ten minutes, or "cold" with what the next prompt re-caches; for ten minutes
-#            after a miss with a cause on this side (tools changed, system prompt changed), why
-#   5h, 7d   Max-plan usage windows. Judged by PACE, not by the bare percent: the projection at
-#            the reset if the window keeps its average burn. ↗ marks a window on pace to run
-#            dry before it resets (yellow; peach from 90% used; red once spent). ↻<eta> is
-#            when the window resets. The 5h one is the owner's priority (2026-10-03): in a
-#            short row it outlives every other detail, the context gauge included
-#   alt      the other Max account's 5h and 7d use, from the shared cache (which account has room)
-#   where    repo, branch (an OSC 8 link to the open PR), dirty count, ahead/behind; a path
-#            outside git
-#   bus      segments mods publish for this session (one file per mod: "agents 7/40"); a mod
+#            after a miss with a cause on this side (tools changed, system prompt changed, the
+#            machine changed accounts), why
+#   windows  the plan's usage windows, in one of two regimes:
+#            one account (no fleet helper): 5h and 7d, judged by PACE, not by the bare percent:
+#              the projection at the reset if the window keeps its average burn. ↗ marks a
+#              window on pace to run dry before it resets (yellow; peach from 90% used; red
+#              once spent). ↻<eta> is when the window resets. alt is another account's 5h and
+#              7d use from the shared cache.
+#            a fleet (a helper reports the accounts a switcher rotates over; see "the account
+#              fleet" below): the account's slug; 5h with its countdown while that window
+#              exists; 7d; the model bucket inside the week ("fable"); and how many other
+#              accounts are left to switch to. No pace: the switcher leaves an account at its
+#              cap, so a window is yellow within five points of the cap and the alarm is the
+#              count of accounts left. The numbers are those of the account the session's
+#              next request runs on, which after a switch is not the one that answered last.
+#            The 5h countdown is the owner's priority (2026-10-03): in a short row it outlives
+#            every other detail, the context gauge included.
+#   where    repo (an OSC 8 link to its page on the host), branch (a link to the open PR),
+#            dirty count, ahead/behind; outside git the path (a link to the folder) and the
+#            session's name, which tells apart sessions rooted in the same folder
+#   bus      segments mods publish for this session (one file per mod: "agents 7/60"); a mod
 #            drawing at the row's right end (mize-coworker's Claude) reserves its cells here too
 #   cost     the session's notional list price, and the part of it that fell in the current 5h
 #            window ("$12/5h"): which tab is burning the window
 #
 # Color carries state: everything is neutral until it needs attention, then yellow (watch),
-# peach (over pace) or red (act now). The model (mauve), the place (blue), the gauge's gradient
+# peach (over) or red (act now). The model (mauve), the place (blue), the gauge's gradient
 # and the ✻ (Claude orange) are the only standing hues. Every glyph is one cell wide. Ghostty
 # draws the caps itself and bundles Nerd Font symbols for the branch glyph; the rest come from
-# the terminal font or its fallback.
+# the terminal font or its fallback. Countdowns keep their width for the hour (2h09m, 09m), so
+# the row does not shift sideways every minute.
 #
 # The script also leaves the session's vitals for mize-coworker, which makes its Claude react
 # to them: <state>/bus/<session id>/.vitals, one line "<context %>\t<5h>\t<7d>\t<cache>" (a
-# window calm, watch, over or crit; the cache warm or cold; empty when unknown), rewritten only
-# when it changes.
+# window calm, watch, over or crit; the cache warm or cold; empty when unknown; in a fleet the
+# 7d field is the worst of the week, the bucket and an alarming count of accounts left), rewritten only when it
+# changes.
 #
-# Payload fields per code.claude.com/docs/en/statusline (v2.1.287). The script is bash 3.2
-# compatible and forks only jq (once) and git (cached per session, refreshed in the
-# background): keep it that way, it runs on every assistant message and on the refresh timer
-# in every open session.
+# Payload fields per code.claude.com/docs/en/statusline (v2.1.322). The script is bash 3.2
+# compatible and forks only jq (once), git (cached per session, refreshed in the background)
+# and the fleet helper (in the background, every two minutes machine-wide): keep it that way,
+# it runs on every assistant message and on the refresh timer in every open session.
 #
 # Test seams: STATUSLINE_NOW (clock), STATUSLINE_USAGE_CACHE (usage cache file),
-# STATUSLINE_STATE_DIR (git cache, bus, vitals, window spend, prune marker), COLUMNS (width),
-# STATUSLINE_STYLE (look). Suites: statusline/tests/test-statusline.sh and
-# statusline/tests/test-statusline-usage-cache.sh (scripts/check-all.sh runs both).
+# STATUSLINE_STATE_DIR (git cache, bus, vitals, window spend, fleet, pins, prune marker),
+# STATUSLINE_FLEET_CMD (the fleet helper; empty for none), STATUSLINE_EFFORT_DEFAULT (the
+# effort that goes unshown), COLUMNS (width), STATUSLINE_STYLE (look). Suites:
+# statusline/tests/test-statusline.sh, test-statusline-usage-cache.sh and
+# test-statusline-fleet.sh (scripts/check-all.sh runs them).
 set -o pipefail
 export LC_ALL=en_US.UTF-8 2>/dev/null   # ${#var} must count characters, not bytes
 
 input="$(cat)"
+# Ranges in a bracket set follow the locale's collation in bash 3.2 (accented and fullwidth
+# letters pass [A-Za-z], a Roman numeral passes [0-9]), so the sets that guard numbers, links,
+# slugs and file names are spelled out.
+D=0123456789; AZ=ABCDEFGHIJKLMNOPQRSTUVWXYZ; az=abcdefghijklmnopqrstuvwxyz; AN="${AZ}${az}${D}"
 jq_bin="$(command -v jq || echo /usr/bin/jq)"
 now="${STATUSLINE_NOW:-${EPOCHSECONDS:-$(date +%s)}}"
-case "$now" in ''|*[!0-9]*) now="$(date +%s)" ;; esac
+case "$now" in ''|*[!$D]*) now="$(date +%s)" ;; esac
 STATE="${STATUSLINE_STATE_DIR:-$HOME/.claude/state/statusline}"
-cols="${COLUMNS:-0}"; case "$cols" in ''|*[!0-9]*) cols=0 ;; esac
+cols="${COLUMNS:-0}"; case "$cols" in ''|*[!$D]*) cols=0 ;; esac; [ "${#cols}" -le 6 ] || cols=0
 
 # --- payload ---------------------------------------------------------------------------------
 # One jq run; fields joined by the unit separator, which (unlike a tab) is not IFS whitespace,
 # so an empty field stays a field instead of collapsing into its neighbor.
 US=$'\037'
 IFS="$US" read -r model dir project pct tin win f5pct f5reset f7pct f7reset effort thinking fast \
-  style agent sid cwarm cexp crecache cttl cmissat cmisscause cost_c wt_name repo_name pr_url _ <<<"$(
+  style agent sid cwarm cexp crecache cttl cmissat cmisscause cost_c wt_name repo_name pr_url \
+  repo_host repo_owner sname _ <<<"$(
   printf '%s' "$input" | "$jq_bin" -r '
     def s: if . == null then "" else tostring | gsub("[[:cntrl:]]"; " ") end;
     [ (.model.display_name // .model.id // "claude"),
@@ -99,13 +121,21 @@ IFS="$US" read -r model dir project pct tin win f5pct f5reset f7pct f7reset effo
       .workspace.git_worktree,
       .workspace.repo.name,
       .pr.url,
+      .workspace.repo.host,
+      .workspace.repo.owner,
+      .session_name,
       "end"
     ] | map(s) | join("\u001f")' 2>/dev/null
 )"
 [ -n "$model" ] || model="claude"
 [ -n "$dir" ] || dir="$PWD"
-int() { case "$1" in ''|*[!0-9]*) R="${2-0}" ;; *) R="$1" ;; esac; }    # digits, or the default (which may be empty)
-case "$sid" in *[!A-Za-z0-9_-]*) sid="" ;; esac                          # it names files below
+int() { # digits, or the default (which may be empty). Leading zeros go, so arithmetic never reads
+        # octal; past 18 digits it is not a number this script can compare.
+  [ "${#1}" -le 18 ] || { R="${2-0}"; return 0; }
+  case "$1" in ''|*[!$D]*) R="${2-0}" ;; 0?*) R="${1#"${1%%[!0]*}"}"; R="${R:-0}" ;; *) R="$1" ;; esac
+}
+case "$sid" in *[!${AN}_-]*) sid="" ;; esac                          # it names files below
+paylim=0; [ -n "$f5pct$f7pct" ] && paylim=1                              # the payload carried rate limits of its own
 
 # --- shared usage cache (2026-07-08; one row per account since 2026-10-02) -------------------
 # The payload's rate_limits reflect THIS session's last API response: idle tabs freeze at stale
@@ -119,31 +149,36 @@ case "$sid" in *[!A-Za-z0-9_-]*) sid="" ;; esac                          # it na
 # Rows: key f5pct f5reset f7pct f7reset epoch ("-" for an absent value). Rows untouched for 8
 # days are dropped. The rows of the OTHER accounts feed the alt segment.
 CACHE="${STATUSLINE_USAGE_CACHE:-$HOME/.claude/state/usage-cache.tsv}"
-key="${f7reset%%.*}"; case "$key" in ''|*[!0-9]*) key="" ;; esac
+key="${f7reset%%.*}"; case "$key" in ''|*[!$D]*) key="" ;; esac; [ "${#key}" -le 18 ] || key=""
+if [ -z "$key" ]; then
+  k5="${f5reset%%.*}"; case "$k5" in ''|*[!$D]*) k5="" ;; esac; [ "${#k5}" -le 18 ] || k5=""
+  [ -n "$k5" ] && key="5h:$k5"
+fi
 others=""; mine=""; newest=""; newest_ts=0; newest_key=""
 if [ -f "$CACHE" ]; then
   while IFS=$'\t' read -r k a b c d ts; do
-    case "$ts" in ''|*[!0-9]*) continue ;; esac            # the old one-row format, or junk
+    int "$ts" ""; ts="$R"; [ -n "$ts" ] || continue        # the old one-row format, or junk
     [ $(( now - ts )) -gt 691200 ] && continue
     row="${a}"$'\t'"${b}"$'\t'"${c}"$'\t'"${d}"$'\t'"${ts}"
     if [ -n "$key" ] && [ "$k" = "$key" ]; then mine="$row"; else others="${others}${k}"$'\t'"${row}"$'\n'; fi
     if [ "$ts" -gt "$newest_ts" ]; then newest_ts="$ts"; newest="$row"; newest_key="$k"; fi
   done 2>/dev/null < "$CACHE"
 fi
-if [ -n "$f5pct" ] && [ -n "$key" ]; then
+if [ "$paylim" -eq 1 ] && [ -n "$key" ]; then
   c5=""; c5r=""; c7=""; cts=0
   [ -n "$mine" ] && IFS=$'\t' read -r c5 c5r c7 _ cts <<<"$mine"
-  p5r="${f5reset%%.*}"; case "$p5r" in ''|*[!0-9]*) p5r=0 ;; esac
-  o5r="${c5r%%.*}"; case "$o5r" in ''|*[!0-9]*) o5r=0 ;; esac
+  int "${f5reset%%.*}" 0; p5r="$R"
+  int "${c5r%%.*}" 0; o5r="$R"
+  [ "$p5r" -le "$now" ] && p5r=0; [ "$o5r" -le "$now" ] && o5r=0   # a 5h window that has ended is no window
   take=0
-  if [ -z "$c5" ] || [ "$p5r" -gt "$o5r" ]; then take=1
+  if [ -z "$mine" ] || [ "$p5r" -gt "$o5r" ]; then take=1
   elif [ "$p5r" -lt "$o5r" ]; then take=0
   elif [ $(( now - ${cts:-0} )) -gt 300 ] \
        || [ "${f5pct%%.*}" -gt "${c5%%.*}" 2>/dev/null ] \
        || [ "${f7pct%%.*}" -gt "${c7%%.*}" 2>/dev/null ]; then take=1
   fi
   if [ "$take" -eq 1 ]; then
-    mine="${f5pct}"$'\t'"${f5reset:--}"$'\t'"${f7pct:--}"$'\t'"${f7reset}"$'\t'"${now}"
+    mine="${f5pct:--}"$'\t'"${f5reset:--}"$'\t'"${f7pct:--}"$'\t'"${f7reset:--}"$'\t'"${now}"
     newest="$mine"; newest_key="$key"
     tmp="${CACHE}.$$"
     { printf '%s' "$others"; printf '%s\t%s\n' "$key" "$mine"; } 2>/dev/null > "$tmp" && mv -f "$tmp" "$CACHE" 2>/dev/null
@@ -153,13 +188,153 @@ fi
 # sample any tab on the account has seen (covers idle tabs). A payload with no rate_limits
 # block names no account, so it shows the newest row.
 use="$mine"; usekey="$key"
-[ -n "$key" ] || { use="$newest"; usekey="$newest_key"; }
+[ -n "$key" ] || [ -n "$f5pct" ] || { use="$newest"; usekey="$newest_key"; }
 if [ -n "$use" ]; then
   IFS=$'\t' read -r c5 c5r c7 c7r cts <<<"$use"
   if [ -n "${c5:-}" ] && [ $(( now - ${cts:-0} )) -lt 90 ]; then
     f5pct="$c5"; f5reset="$c5r"; f7pct="$c7"; f7reset="$c7r"
+    [ "$f5pct" = "-" ] && f5pct=""
     [ "$f5reset" = "-" ] && f5reset=""
     [ "$f7pct" = "-" ] && f7pct=""
+    [ "$f7reset" = "-" ] && f7reset=""
+  fi
+fi
+
+# --- the account fleet (2026-11-11) -----------------------------------------------------------
+# On a machine that rotates over several accounts (a switcher moves it to the next one when a
+# window nears its cap), one account's windows are half the picture, and the payload tells it
+# stale: it reflects this session's last response, so after a switch an idle tab keeps showing
+# the account the machine left, and a cache that is in fact cold on the new one. A helper the
+# owner installs (STATUSLINE_FLEET_CMD, by default ~/.claude/statusline-fleet.sh; without one
+# this whole section is inert and the row is the single-account row) prints the fleet, and
+# its answer is kept as <state>/fleet.tsv for every session:
+#   #fleet <epoch> <active slug> <5h cap> <7d cap> <bucket cap> <bucket label> <switched at> <full|local>
+#   <slug> <ok|out|reserve|down> <5h %> <5h reset> <7d %> <7d reset> <bucket %> <sample epoch>
+# ("-" for unknown; the caps are the percents at which the switcher leaves an account; the
+# bucket is a model's share of the week, "fable"; switched at: when the machine last changed
+# accounts; local: the helper knows the active account only). It is asked again in the
+# background once the last try is two minutes old (fleet.tsv.try holds that try's epoch,
+# whatever came of it); an answer over fifteen minutes old is not shown, and one over five no
+# longer redirects or pins a session.
+#
+# Which account a session's NEXT request runs on:
+#   me      the row whose seven-day reset is the payload's (the active row when two rows share
+#           the reset): the account that answered the process last, a subagent's answer included
+#   moved   the machine switched after the main conversation's last request (the cached
+#           prefix's expiry minus its lifetime is when that was): the prefix lives on the
+#           account the machine left, so the cache is cold, and the next request runs on the
+#           active account, whose numbers are shown. For 90 s after the switch a request may
+#           still have gone to the old account; then me decides
+#   pinned  a session seen answering on another fleet account ten minutes or more after the
+#           switch has a login of its own: <state>/pin/<session id> holds that account until
+#           the session is seen on a different one, and a pinned session is never redirected
+# A session that has not answered yet shows the active account. With a full fleet, a session
+# whose account is no row of it is on another login and is left alone.
+FLEET="$STATE/fleet.tsv"
+FLEET_CMD="${STATUSLINE_FLEET_CMD-$HOME/.claude/statusline-fleet.sh}"
+fl_ok=0; fl_at=0; fl_active=""; fl_t5=95; fl_t7=98; fl_tb=""; fl_label=""; fl_sw=0; fl_full=0
+fl_all=0; fl_ready=0; fl_back=0
+me_id=""; me_7=""; me_b=""; me_rdy=0; me_amb=0; ac_id=""; ac_5=""; ac_5r=""; ac_7=""; ac_7r=""; ac_b=""; ac_rdy=0
+int "$key" 0; k7="$R"
+if [ -f "$FLEET" ]; then
+  while IFS=$'\t' read -r a b c d x f g h m; do
+    case "$a" in
+      '#fleet')
+        int "$b" 0; fl_at="$R"
+        [ "$fl_at" -gt 0 ] && [ "$fl_at" -le $(( now + 60 )) ] && [ $(( now - fl_at )) -lt 900 ] || break
+        fl_ok=1; fl_active="$c"; int "$d" 95; fl_t5="$R"; int "$x" 98; fl_t7="$R"; int "$f" ""; fl_tb="$R"
+        fl_label="${g//[!${az}${D}]/}"; fl_label="${fl_label:0:8}"; int "$h" 0; fl_sw="$R"
+        [ "$fl_sw" -gt $(( now + 60 )) ] && fl_sw=0
+        [ "$m" = full ] && fl_full=1 ;;
+      ''|'#'*) ;;
+      *)
+        [ "$fl_ok" -eq 1 ] || break
+        case "$a" in *[!${AN}_-]*) continue ;; esac
+        int "$c" 0; r5="$R"; int "$d" 0; r5r="$R"; int "$x" ""; r7="$R"; int "$f" 0; r7r="$R"; int "$g" ""; rb="$R"
+        # a window whose reset has passed since the sample is empty again
+        if [ "$r7r" -gt 0 ] && [ "$r7r" -le "$now" ]; then [ -n "$r7" ] && r7=0; [ -n "$rb" ] && rb=0; fi
+        [ "$r5r" -gt 0 ] && [ "$r5r" -le "$now" ] && r5=0
+        rdy=0
+        if [ "$b" = ok ] && [ -n "$r7" ]; then
+          fl_all=$(( fl_all + 1 ))
+          if [ "$r7" -lt "$fl_t7" ] && { [ -z "$rb" ] || [ -z "$fl_tb" ] || [ "$rb" -lt "$fl_tb" ]; }; then
+            if [ "$r5" -lt "$fl_t5" ]; then rdy=1; fl_ready=$(( fl_ready + 1 )); else back="$r5r"; fi
+          else back="$r7r"; fi
+          # the first spent account to come back
+          [ "$rdy" -eq 0 ] && [ "$back" -gt "$now" ] && { [ "$fl_back" -eq 0 ] || [ "$back" -lt "$fl_back" ]; } && fl_back="$back"
+        fi
+        if [ "$a" = "$fl_active" ]; then ac_id="$a"; ac_5="$r5"; ac_5r="$r5r"; ac_7="$r7"; ac_7r="$r7r"; ac_b="$rb"; ac_rdy="$rdy"; fi
+        if [ "$k7" -gt 0 ] && [ "$r7r" -gt 0 ]; then
+          dd=$(( r7r - k7 )); [ "$dd" -lt 0 ] && dd=$(( -dd ))
+          if [ "$dd" -le 90 ]; then
+            # two accounts can share a reset hour: the active one is the likelier, and two
+            # others leave it open which
+            if [ -z "$me_id" ] || [ "$a" = "$fl_active" ]; then me_id="$a"; me_7="$r7"; me_b="$rb"; me_rdy="$rdy"
+            elif [ "$me_id" != "$fl_active" ]; then me_amb=1; fi
+          fi
+        fi ;;
+    esac
+  done 2>/dev/null < "$FLEET"
+fi
+acct=""; b_pct=""; moved=0; pinned=0; fl_left=0; switched=0
+if [ "$fl_ok" -eq 1 ] && [ -n "$ac_id" ]; then
+  fresh=0; [ $(( now - fl_at )) -lt 300 ] && fresh=1
+  lreq=0; lx="${cexp%%.*}"; int "$lx" 0; lx="$R"
+  if [ "$lx" -gt 0 ]; then case "$cttl" in 1h) lreq=$(( lx - 3600 )) ;; 5m) lreq=$(( lx - 300 )) ;; esac; fi
+  pin=""; pfile=""
+  if [ -n "$sid" ]; then
+    pfile="$STATE/pin/$sid"
+    [ -f "$pfile" ] && { IFS= read -r -n 64 pin 2>/dev/null < "$pfile"; case "$pin" in ''|*[!${AN}_-]*) pin="" ;; esac; }
+    if [ -n "$pin" ] && [ -n "$me_id" ] && [ "$me_id" != "$pin" ]; then
+      pin=""; rm -f "$pfile" 2>/dev/null          # seen on another account: it follows the machine after all
+    elif [ -z "$pin" ] && [ "$fresh" -eq 1 ] && [ -n "$me_id" ] && [ "$me_amb" -eq 0 ] && [ "$me_id" != "$ac_id" ] \
+         && [ "$fl_sw" -gt 0 ] && [ "$lreq" -ge $(( fl_sw + 600 )) ]; then
+      pin="$me_id"; mkdir -p "$STATE/pin" 2>/dev/null
+      { [ ! -e "$pfile" ] || [ -f "$pfile" ]; } && printf '%s\n' "$pin" 2>/dev/null > "$pfile"
+    fi
+  fi
+  mv=0
+  if [ "$lreq" -gt 0 ] && [ "$fl_sw" -gt 0 ]; then
+    if [ "$lreq" -lt "$fl_sw" ]; then mv=1
+    elif [ "$lreq" -lt $(( fl_sw + 90 )) ] && [ -n "$me_id" ] && [ "$me_id" != "$ac_id" ]; then mv=1; fi
+  fi
+  # with a full fleet, a session whose account is no row of it is on another login
+  [ "$fl_full" -eq 1 ] && [ "$paylim" -eq 1 ] && [ -z "$me_id" ] && mv=0
+  rdy=0
+  if [ -n "$pin" ]; then
+    pinned=1; [ "$me_id" = "$pin" ] && { acct="$pin"; b_pct="$me_b"; }
+  elif [ "$fresh" -eq 1 ] && { [ "$paylim" -eq 0 ] || [ "$mv" -eq 1 ]; }; then
+    moved="$mv"
+    acct="$ac_id"; b_pct="$ac_b"; rdy="$ac_rdy"
+    if [ "$me_id" = "$ac_id" ]; then   # a subagent already answered on the active account: the payload is its fresher sample
+      int "${f7pct%%.*}" ""; [ -n "$ac_7" ] && [ -n "$R" ] && [ "$ac_7" -gt "$R" ] && f7pct="$ac_7"
+    else
+      f5pct="$ac_5"; f5reset="$ac_5r"; f7pct="$ac_7"; f7reset="$ac_7r"
+      # the service reports an account with no 5h window as 0% of one that starts now
+      [ "$f5pct" = 0 ] && { f5pct=""; f5reset=""; }
+    fi
+  elif [ -n "$me_id" ]; then
+    acct="$me_id"; b_pct="$me_b"; rdy="$me_rdy"
+    # the fleet's sample of this same window may be newer than this tab's last response
+    int "${f7pct%%.*}" ""; [ -n "$me_7" ] && [ -n "$R" ] && [ "$me_7" -gt "$R" ] && f7pct="$me_7"
+  elif [ "$fl_full" -eq 0 ] && [ "$paylim" -eq 1 ]; then
+    acct="$ac_id"; rdy="$ac_rdy"   # a helper that knows the active account only: taken to be this one
+  fi
+  if [ -n "$acct" ] && [ "$pinned" -eq 0 ]; then
+    fl_left=$(( fl_ready - rdy ))
+    [ "$fl_sw" -gt 0 ] && [ "$fl_sw" -le "$now" ] && [ $(( now - fl_sw )) -lt 600 ] && switched=1
+  fi
+fi
+if [ -n "$FLEET_CMD" ] && [ -x "$FLEET_CMD" ] && [ -f "$FLEET_CMD" ]; then
+  ftry=0; [ -f "$FLEET.try" ] && { IFS= read -r -n 64 ftry 2>/dev/null < "$FLEET.try"; int "$ftry" 0; ftry="$R"; }
+  if [ "$ftry" -gt "$now" ] || [ $(( now - ftry )) -ge 120 ]; then
+    [ -d "$STATE" ] || mkdir -p "$STATE" 2>/dev/null
+    # only ever a regular file: opening anything else for writing could hold the row
+    if { [ ! -e "$FLEET.try" ] || [ -f "$FLEET.try" ]; } && printf '%s\n' "$now" 2>/dev/null > "$FLEET.try"; then
+      ( o="$("$FLEET_CMD" 2>/dev/null)" || exit 0
+        case "$o" in '#fleet'*) printf '%s\n' "$o" 2>/dev/null > "$FLEET.$$" && mv -f "$FLEET.$$" "$FLEET" 2>/dev/null ;; esac
+      ) >/dev/null 2>&1 &
+    fi
   fi
 fi
 
@@ -175,6 +350,8 @@ c_mauve="${e}[38;2;203;166;247m"; c_blue="${e}[38;2;137;180;250m"; c_lav="${e}[3
 c_yellow="${e}[38;2;249;226;175m"; c_peach="${e}[38;2;250;179;135m"; c_red="${e}[38;2;243;139;168m"
 c_claude="${e}[38;2;217;119;87m"  # the ✻
 K_CHIP="38;39;55"; K_WARN="58;51;36"; K_FAIL="61;37;48"   # chip grounds: any group, a bus warning, a failure
+K_OVER="62;45;36"                                          # a group whose worst piece is over (peach); spent ones take K_FAIL
+c_lab2="${e}[38;2;147;153;178m"   # labels on a tinted ground, where overlay1 is too faint (overlay2)
 CL=$'\xee\x82\xb6'; CR=$'\xee\x82\xb4'   # a chip's left and right caps (U+E0B6, U+E0B4)
 BRG=$'\xee\x82\xa0'                     # the branch glyph (U+E0A0)
 # The look: chips in Ghostty unless STATUSLINE_STYLE says otherwise, flat anywhere else.
@@ -205,11 +382,12 @@ fmtk() { # tokens -> 950, 147k, 1M, 1.2M
   elif [ "$n" -ge 1000 ]; then R="$(( n / 1000 ))k"
   else R="$n"; fi
 }
-eta() { # seconds -> 6d8h, 3h1m, 24m, <1m
+eta() { # seconds -> 6d8h, 3h01m, 24m, 09m, <1m (minutes always two digits: the width holds for the hour)
   local s=$1 d h m; d=$(( s / 86400 )); h=$(( (s % 86400) / 3600 )); m=$(( (s % 3600) / 60 ))
   if   [ "$d" -gt 0 ]; then R="${d}d"; [ "$h" -gt 0 ] && R="${R}${h}h"
-  elif [ "$h" -gt 0 ]; then R="${h}h"; [ "$m" -gt 0 ] && R="${R}${m}m"
-  elif [ "$m" -gt 0 ]; then R="${m}m"
+  elif [ "$h" -gt 0 ]; then R="${h}h"; [ "$m" -lt 10 ] && R="${R}0"; R="${R}${m}m"
+  elif [ "$m" -gt 9 ]; then R="${m}m"
+  elif [ "$m" -gt 0 ]; then R="0${m}m"
   else R="<1m"; fi
 }
 gauge() { # pct, any (1: some tokens in use) -> R: ten ▬ cells, colored
@@ -256,12 +434,14 @@ gauge() { # pct, any (1: some tokens in use) -> R: ten ▬ cells, colored
 # between groups are not part of a segment: the layout pass counts them.
 seg() {
   local x="${3//[[:ascii:]]/}" g   # the class, not a range: bash 3.2 collates [ -~] by locale
-  for g in ▬ ✻ ↻ · … ▲ ✗ ↗ ↑ ↓ $BRG; do x="${x//$g/}"; done   # one by one: bash 3.2 has no multibyte bracket sets
+  for g in ▬ ✻ ↻ · … ▲ ✗ ↗ ↑ ↓ ⇄ $BRG; do x="${x//$g/}"; done   # one by one: bash 3.2 has no multibyte bracket sets
   printf -v "P_$1_$2" '%s' "$(( ${#3} + ${#x} ))"; printf -v "T_$1_$2" '%s' "$4"; printf -v "LV_$1" '%s' "$2"
 }
 
-# model: name, effort, and only the flags that are off-nominal. Levels: 1 the name (and flags),
-# 2 with the effort, 3 with the ✻ before it, 4 with the agent and output style.
+# model: name, and only what is off-nominal: a flag, an effort other than the standing one
+# (STATUSLINE_EFFORT_DEFAULT, xhigh unless set; set it empty to always show the effort).
+# Levels: 1 the name (and flags), 2 with the effort, 3 with the ✻ before it, 4 with the agent
+# and output style.
 int "$pct" ""; pct="$R"
 model="${model:0:28}"
 m_p="$model"; m_c="${c_mauve}${model}${rst}"
@@ -270,7 +450,7 @@ f_p=""; f_c=""
 [ "$thinking" = "false" ] && { f_p="${f_p} no-think"; f_c="${f_c} ${c_red}no-think${rst}"; }
 seg model 1 "${m_p}${f_p}" "${m_c}${f_c}"
 mf_p="$f_p"; mf_c="$f_c"   # kept for the last-resort cut in the layout (the bus reuses f_p, f_c)
-if [ -n "$effort" ]; then
+if [ -n "$effort" ] && [ "$effort" != "${STATUSLINE_EFFORT_DEFAULT-xhigh}" ]; then
   ecol="$c_lab"; [ "$effort" = "max" ] && ecol="$c_val"
   m_p="${m_p} ${effort:0:8}"; m_c="${m_c} ${ecol}${effort:0:8}${rst}"
   seg model 2 "${m_p}${f_p}" "${m_c}${f_c}"
@@ -282,21 +462,21 @@ x_p=""; x_c=""
 [ -n "$style" ] && [ "$style" != "default" ] && { x_p="${x_p} ${style:0:16}"; x_c="${x_c} ${c_lab}${style:0:16}${rst}"; }
 [ -n "$x_p" ] && seg model 4 "${m_p}${x_p}" "${m_c}${x_c}"
 
-# ctx: gauge, percent, then the window's size, or used/size. The gauge comes before the percent
-# so a percent growing a digit moves nothing. Levels: 1 the percent, 2 with the gauge, 3 with
-# the size, 4 with used/size.
-LV_ctx=0
+# ctx: gauge, percent, then the window's size when it is not the 1M one (the percent of a
+# known window needs no token count beside it). The gauge comes before the percent so a
+# percent growing a digit moves nothing. Levels: 1 the percent, 2 with the gauge, 3 with the
+# size.
+LV_ctx=0; ST_ctx=calm
 int "$tin" 0; tin="$R"; int "$win" 0; win="$R"
-sz_p=""; sz_c=""; us_p=""; us_c=""
-if [ "$win" -gt 0 ]; then
-  fmtk "$win"; sz="$R"; sz_p=" ${sz}"; sz_c=" ${c_low}${sz}${rst}"
-  [ "$tin" -gt 0 ] && { fmtk "$tin"; us_p=" ${R}/${sz}"; us_c=" ${c_low}${R}/${sz}${rst}"; }
-elif [ "$tin" -gt 0 ]; then
-  fmtk "$tin"; us_p=" ${R}"; us_c=" ${c_low}${R}${rst}"
+sz_p=""; sz_c=""
+if [ "$win" -gt 0 ] && [ "$win" -ne 1000000 ]; then
+  fmtk "$win"; sz_p=" ${R}"; sz_c=" ${c_low}${R}${rst}"
+elif [ "$win" -eq 0 ] && [ "$tin" -gt 0 ]; then
+  fmtk "$tin"; sz_p=" ${R}"; sz_c=" ${c_low}${R}${rst}"   # no window size: the tokens in use say the scale
 fi
 if [ -n "$pct" ]; then
   [ "$pct" -gt 100 ] && pct=100
-  if [ "$pct" -ge 85 ]; then cc="$c_red"; elif [ "$pct" -ge 70 ]; then cc="$c_yellow"; else cc="$c_val"; fi
+  if [ "$pct" -ge 85 ]; then cc="$c_red"; ST_ctx=crit; elif [ "$pct" -ge 70 ]; then cc="$c_yellow"; else cc="$c_val"; fi
   any=0; [ "$tin" -gt 0 ] && any=1
   gauge "$pct" "$any"; v_p="${pct}%"; v_c="${cc}${pct}%${rst}"
 else
@@ -306,7 +486,6 @@ gauge_c="$R"
 seg ctx 1 "ctx ${v_p}" "${c_lab}ctx${rst} ${v_c}"
 seg ctx 2 "ctx ▬▬▬▬▬▬▬▬▬▬ ${v_p}" "${c_lab}ctx${rst} ${gauge_c} ${v_c}"
 [ -n "$sz_p" ] && seg ctx 3 "ctx ▬▬▬▬▬▬▬▬▬▬ ${v_p}${sz_p}" "${c_lab}ctx${rst} ${gauge_c} ${v_c}${sz_c}"
-[ -n "$us_p" ] && seg ctx 4 "ctx ▬▬▬▬▬▬▬▬▬▬ ${v_p}${us_p}" "${c_lab}ctx${rst} ${gauge_c} ${v_c}${us_c}"
 
 # cache: how long the cached prefix stays warm, or what a cold one costs. Loud only when the
 # re-cache is big enough to matter (100k tokens and up). For ten minutes after a miss whose
@@ -314,8 +493,14 @@ seg ctx 2 "ctx ▬▬▬▬▬▬▬▬▬▬ ${v_p}" "${c_lab}ctx${rst} ${gauge
 # why; a server-side miss or an expired TTL is not news.
 LV_cache=0; cache_urgent=0; cstate=""   # cstate: warm, cold or unknown (empty), for the vitals
 int "$cexp" ""; cexp="$R"; int "$crecache" 0; crecache="$R"; int "$cmissat" 0; cmissat="$R"
+if [ "$moved" -eq 1 ] && [ -n "$cwarm" ]; then   # the prefix was cached on the account the machine left
+  cwarm="false"; cexp=""; cmissat=0; [ "$crecache" -gt 0 ] || crecache="$tin"
+fi
 miss=""
 if [ "$cmissat" -gt 0 ] && [ "$cmissat" -le "$now" ] && [ $(( now - cmissat )) -lt 600 ]; then
+  # a miss right after the machine changed accounts is the switch, which the engine cannot know
+  [ -n "$acct" ] && [ "$pinned" -eq 0 ] && [ "$fl_sw" -gt 0 ] && [ "$cmissat" -ge "$fl_sw" ] && [ $(( cmissat - fl_sw )) -lt 900 ] \
+    && case "$cmisscause" in ''|likely_server_side) cmisscause="account_switch" ;; esac
   case "$cmisscause" in
     ''|likely_server_side|ttl_expired*) ;;
     *) miss="${cmisscause//_/ }"; miss="${miss//[^a-z0-9 ]/}"; miss="${miss:0:22}"; [ -n "$miss" ] && miss="miss: ${miss}" ;;
@@ -323,6 +508,7 @@ if [ "$cmissat" -gt 0 ] && [ "$cmissat" -le "$now" ] && [ $(( now - cmissat )) -
 fi
 if [ "$cwarm" = "true" ] && [ -n "$cexp" ] && [ "$cexp" -gt "$now" ]; then
   cstate=warm; left=$(( cexp - now )); eta "$left"; ce="$R"
+  [ "$left" -ge 3600 ] && [ "$left" -lt 3660 ] && ce="60m"   # a fresh 1h prefix: the same three cells as 59m
   if [ "$left" -le 600 ] && [ "$cttl" != "5m" ] && [ "$crecache" -ge 100000 ]; then
     cache_urgent=1; cw_c="${c_lab}cache${rst} ${c_yellow}${ce}${rst}"
   else
@@ -379,20 +565,91 @@ plan() {
   [ -n "$t_rst_p" ] && seg "$id" 2 "${label} ${pint}%${mark_p}${t_rst_p}" "${c_lab}${label}${rst} ${col}${pint}%${rst}${mark_c}${t_rst_c}"
   printf -v "ST_$id" '%s' "$state"
 }
-plan h5 5h "$f5pct" "$f5reset" 18000 1800
-plan d7 7d "$f7pct" "$f7reset" 604800 86400
-hot=0; [ "${ST_h5}${ST_d7}" = "calmcalm" ] || hot=1   # a window on pace to run dry: the other account matters
+# near <id> <label> <pct> <cap> [resets_at]: a window of an account in a fleet. The switcher
+# leaves the account at the cap, so running dry is the fleet's business and not this
+# window's: no pace and no ↗. watch within five points of the cap (a switch, and with it a
+# cold cache, is close); at the cap, over while another account has room or the helper does
+# not know the others (the switch is due), and crit when none has or the window is spent.
+near() {
+  local id=$1 label=$2 p=$3 cap=$4 r=$5 pint state=calm col
+  printf -v "LV_$id" '%s' 0; printf -v "ST_$id" '%s' calm
+  [ -n "$p" ] || return 0
+  pint=${p%%.*}; int "$pint" 0; pint="$R"
+  if [ "$pint" -ge "$cap" ]; then
+    state=over; { [ "$pint" -ge 100 ] || { [ "$fl_full" -eq 1 ] && [ "$fl_left" -le 0 ]; }; } && state=crit
+  elif [ "$pint" -ge $(( cap - 5 )) ]; then state=watch; fi
+  scol "$state"; col="$R"
+  seg "$id" 1 "${label} ${pint}%" "${c_lab}${label}${rst} ${col}${pint}%${rst}"
+  r=${r%%.*}; int "$r" 0; r="$R"
+  if [ "$r" -gt "$now" ]; then
+    eta $(( r - now )); seg "$id" 2 "${label} ${pint}% ↻${R}" "${c_lab}${label}${rst} ${col}${pint}%${rst} ${c_low}↻${R}${rst}"
+  fi
+  printf -v "ST_$id" '%s' "$state"
+}
+# A session on a fleet account (and not pinned to it) shows, in the windows' chip:
+#   acct    the account's slug, among the first pieces to go; for ten minutes after a
+#           switch it reads "⇄ acct1" in yellow, which is why the numbers just changed, and
+#           stays longer
+#   5h      only while the account has a live 5h window, with its countdown
+#   7d      the week, without a countdown: the switcher leaves long before it resets
+#   bucket  the model bucket inside the week, under the helper's label ("fable")
+#   left    how many OTHER accounts the switcher could move to now (under every cap). A
+#           number, not an alarm, from two up. At one or none it is as urgent as this
+#           account is close to its own cap: yellow while its windows are calm, peach once
+#           one is within five points of its cap, and red only at a cap with none left; then
+#           also the countdown to the first spent account's reset
+# nb is the window with more room under its cap, the first of the two to go in a short row.
+LV_acct=0; LV_bk=0; ST_bk=calm; LV_fleet=0; ST_fleet=calm; fm=0; nb=""
+[ -n "$acct" ] && [ "$pinned" -eq 0 ] && fm=1
+if [ "$fm" -eq 1 ]; then
+  near h5 5h "$f5pct" "$fl_t5" "$f5reset"
+  near d7 7d "$f7pct" "$fl_t7"
+  [ -n "$b_pct" ] && [ -n "$fl_label" ] && near bk "$fl_label" "$b_pct" "${fl_tb:-100}"
+  hot=0
+  if [ "$LV_d7" -gt 0 ] && [ "$LV_bk" -gt 0 ]; then
+    int "${f7pct%%.*}" 0; n7="$R"; int "${b_pct%%.*}" 0
+    nb=bk; [ $(( fl_t7 - n7 )) -gt $(( ${fl_tb:-100} - R )) ] && nb=d7
+  fi
+  if [ "$fl_full" -eq 1 ] && [ "$fl_all" -gt 1 ]; then
+    [ "$fl_left" -lt 0 ] && fl_left=0
+    if [ "$fl_left" -le 1 ]; then
+      case "${ST_h5}${ST_d7}${ST_bk}" in
+        *crit*) ST_fleet=crit ;;
+        *over*) ST_fleet=over ;;
+        *watch*) ST_fleet=over ;;
+        *) ST_fleet=watch ;;
+      esac
+    fi
+    scol "$ST_fleet"; lc="$R"; ln="$fl_left"; [ "$fl_left" -eq 0 ] && ln=none
+    seg fleet 1 "${ln} left" "${lc}${ln}${rst} ${c_lab}left${rst}"
+    if [ "$fl_left" -le 1 ] && [ "$fl_back" -gt "$now" ]; then
+      eta $(( fl_back - now )); seg fleet 2 "${ln} left ↻${R}" "${lc}${ln}${rst} ${c_lab}left${rst} ${c_low}↻${R}${rst}"
+    fi
+  fi
+else
+  plan h5 5h "$f5pct" "$f5reset" 18000 1800
+  plan d7 7d "$f7pct" "$f7reset" 604800 86400
+  hot=0; [ "${ST_h5}${ST_d7}" = "calmcalm" ] || hot=1   # a window on pace to run dry: the other account matters
+  if [ -n "$acct" ] && [ -n "$b_pct" ] && [ -n "$fl_label" ]; then   # a pinned session: its bucket, judged like its week
+    plan bk "$fl_label" "$b_pct" "$f7reset" 604800 86400; [ "$LV_bk" -gt 1 ] && LV_bk=1
+  fi
+fi
+if [ -n "$acct" ]; then
+  acct="${acct:0:12}"
+  if [ "$switched" -eq 1 ]; then seg acct 1 "⇄ ${acct}" "${c_yellow}⇄ ${acct}${rst}"
+  else seg acct 1 "$acct" "${c_lab}${acct}${rst}"; fi
+fi
 
 # alt: the freshest other account whose seven-day window is still the one sampled. Its 5h
 # number is 0 once that window's reset has passed; a sample over an hour old says how old.
 LV_alt=0
-if [ -n "$others" ] && [ -n "$key" ]; then   # only when this session's own account is known
+if [ -n "$others" ] && [ -n "$key" ] && [ -z "$acct" ]; then   # this session's own account is known, and no fleet says more
   best_ts=0; b5=""; b5r=""; b7=""
   while IFS=$'\t' read -r k a b c d ts; do
     [ -n "$k" ] || continue
     [ "$k" = "$usekey" ] && continue
-    case "$k" in *[!0-9]*) continue ;; esac
-    [ "$k" -gt "$now" ] || continue                          # that week rolled over: numbers unknown
+    int "$k" ""; [ -n "$R" ] || continue
+    [ "$R" -gt "$now" ] || continue                          # that week rolled over: numbers unknown
     [ "$ts" -gt "$best_ts" ] && { best_ts="$ts"; b5="$a"; b5r="$b"; b7="$c"; }
   done <<<"$others"
   if [ "$best_ts" -gt 0 ]; then
@@ -491,7 +748,13 @@ short_path() { # absolute path -> ~/a/b, middle-elided past 32 cells
   R="$p"
 }
 link_a=""; link_z=""   # the open PR, as an OSC 8 link on the branch (the footer shows the PR badge itself)
-case "$pr_url" in https://*) case "$pr_url" in *[!A-Za-z0-9:/._~%#?=\&+-]*) ;; *) link_a="${e}]8;;${pr_url}${e}\\"; link_z="${e}]8;;${e}\\" ;; esac ;; esac
+case "$pr_url" in https://*) case "$pr_url" in *[!${AN}:/._~%#?=\&+-]*) ;; *) link_a="${e}]8;;${pr_url}${e}\\"; link_z="${e}]8;;${e}\\" ;; esac ;; esac
+# The repo's name links to its page on the host, a path outside git to the folder itself.
+rl_a=""; rl_z=""
+case "$repo_host" in ''|*[!${AN}.-]*) ;; *)
+  case "${repo_owner}/${repo_name}" in /*|*/|*//*|*[!${AN}._/-]*) ;; *)
+    rl_a="${e}]8;;https://${repo_host}/${repo_owner}/${repo_name}${e}\\"; rl_z="${e}]8;;${e}\\" ;; esac ;;
+esac
 LV_loc=0
 if [ -n "$g_root" ]; then
   # A linked worktree is a checkout whose git dir is not the common dir (a submodule's git dir
@@ -518,7 +781,7 @@ if [ -n "$g_root" ]; then
     else wt="/${w:0:24}"; fi
   fi
   br="$g_branch"; br_s="$br"; [ "${#br_s}" -gt 24 ] && br_s="${br_s:0:23}…"
-  n_p="${name}${wt}"; n_c="${c_blue}${name}${c_lab}${wt}${rst}"
+  n_p="${name}${wt}"; n_c="${rl_a}${c_blue}${name}${rst}${rl_z}${c_lab}${wt}${rst}"
   b_p=""; b_c=""; bs_p=""; bs_c=""
   if [ -n "$br" ]; then
     gl_p=" "; gl_c=" "; [ -n "$BRG" ] && { gl_p=" ${BRG} "; gl_c=" ${c_lab}${BRG}${rst} "; }   # chips: the branch glyph
@@ -529,15 +792,22 @@ if [ -n "$g_root" ]; then
   [ "$g_dirty" -gt 0 ] && { x_p="${x_p} *${g_dirty}"; x_c="${x_c} ${c_val}*${g_dirty}${rst}"; }
   [ "$g_ahead" -gt 0 ] && { x_p="${x_p} ↑${g_ahead}"; x_c="${x_c} ${c_val}↑${g_ahead}${rst}"; }
   [ "$g_behind" -gt 0 ] && { x_p="${x_p} ↓${g_behind}"; x_c="${x_c} ${c_val}↓${g_behind}${rst}"; }
-  seg loc 1 "$name" "${c_blue}${name}${rst}"
+  seg loc 1 "$name" "${rl_a}${c_blue}${name}${rst}${rl_z}"
   seg loc 2 "${n_p}${bs_p}" "${n_c}${bs_c}"
   seg loc 3 "${n_p}${bs_p}${x_p}" "${n_c}${bs_c}${x_c}"
-  seg loc 4 "${name}${wt}${sub}${b_p}${x_p}" "${c_blue}${name}${c_lab}${wt}${sub}${rst}${b_c}${x_c}"
+  seg loc 4 "${name}${wt}${sub}${b_p}${x_p}" "${rl_a}${c_blue}${name}${rst}${rl_z}${c_lab}${wt}${sub}${rst}${b_c}${x_c}"
 else
   short_path "$dir"; lp="$R"; base="${dir##*/}"; base="${base:0:32}"
   [ -n "$base" ] || base="/"
-  seg loc 1 "$base" "${c_blue}${base}${rst}"
-  seg loc 2 "$lp" "${c_blue}${lp}${rst}"
+  pl_a=""; pl_z=""
+  case "$dir" in /*) case "$dir" in *[!${AN}/._~+-]*) ;; *) pl_a="${e}]8;;file://${dir}${e}\\"; pl_z="${e}]8;;${e}\\" ;; esac ;; esac
+  seg loc 1 "$base" "${pl_a}${c_blue}${base}${rst}${pl_z}"
+  seg loc 2 "$lp" "${pl_a}${c_blue}${lp}${rst}${pl_z}"
+  # Sessions rooted in the same folder outside git read alike: the session's name tells them apart.
+  sname="${sname//[^[:print:]]/}"; sname="${sname:0:48}"; sn="$sname"
+  while x="${sn//[[:ascii:]]/}"; [ $(( ${#sn} + ${#x} )) -gt 24 ]; do sn="${sn%?}"; done
+  [ "$sn" != "$sname" ] && { x="${sn//[[:ascii:]]/}"; [ $(( ${#sn} + ${#x} )) -gt 23 ] && sn="${sn%?}"; sname="${sn}…"; }
+  [ -n "$sname" ] && seg loc 3 "${lp} · ${sname}" "${pl_a}${c_blue}${lp}${rst}${pl_z} ${c_dot}·${rst} ${c_sub}${sname}${rst}"
 fi
 
 # bus: what mods published for this session, one file each: "<level>\t<text>[\t<until>]".
@@ -621,6 +891,12 @@ fi
 # only when it changes, so the hot path costs one read.
 if [ -n "$sid" ]; then
   vt5=""; [ -n "$f5pct" ] && vt5="$ST_h5"; vt7=""; [ -n "$f7pct" ] && vt7="$ST_d7"
+  if [ "$fm" -eq 1 ]; then   # in a fleet the week's field carries the worst of the week, the bucket and the fleet
+    fst="$ST_fleet"; [ "$fst" = watch ] && fst=calm   # few accounts left while this one has room is no alarm yet
+    for st in "$ST_bk" "$fst"; do
+      case "${vt7:-calm}:$st" in calm:watch|calm:over|calm:crit|watch:over|watch:crit|over:crit) vt7="$st" ;; esac
+    done
+  fi
   vit="${pct}"$'\t'"${vt5}"$'\t'"${vt7}"$'\t'"${cstate}"
   vfile="$STATE/bus/$sid/.vitals"; vold=""
   [ -f "$vfile" ] && IFS= read -r vold 2>/dev/null < "$vfile"
@@ -631,10 +907,13 @@ if [ -n "$sid" ]; then
 fi
 
 # --- layout: lower levels, least important first, until the line fits ------------------------
-ORDER="model ctx cache h5 d7 alt loc bus cost"
-GROUP_model=1; GROUP_ctx=2; GROUP_cache=2; GROUP_h5=3; GROUP_d7=3; GROUP_alt=3; GROUP_loc=4; GROUP_bus=5; GROUP_cost=6
-# In chips the two windows' bare percents pair up with one space ("5h 69%↗ 7d 67%↗"); any
-# other two pieces of a group are joined by " · ". width and the drawing below share the rule.
+ORDER="model ctx cache acct h5 d7 bk fleet alt loc bus cost"
+GROUP_model=1; GROUP_ctx=2; GROUP_cache=2; GROUP_acct=3; GROUP_h5=3; GROUP_d7=3; GROUP_bk=3; GROUP_fleet=3; GROUP_alt=3
+GROUP_loc=4; GROUP_bus=5; GROUP_cost=6
+# In chips two neighboring windows' bare percents pair up with one space ("5h 69%↗ 7d 67%↗",
+# "7d 57% fable 62%"); any other two pieces of a group are joined by " · ". width and the
+# drawing below share the rule.
+pair() { case "$1" in h51d71|d71bk1|h51bk1) return 0 ;; esac; return 1; }
 width() { # -> W: cells the current levels take, caps, gaps and joins included
   local id lv n v g prev=0 pid="" plv=0; W=0
   for id in $ORDER; do
@@ -642,7 +921,7 @@ width() { # -> W: cells the current levels take, caps, gaps and joins included
     v="P_${id}_${lv}"; g="GROUP_$id"; g="${!g}"
     if [ "$g" -ne "$prev" ]; then
       W=$(( W + CAPW )); [ "$prev" -eq 0 ] || W=$(( W + GAPW ))
-    elif [ "$look" = chips ] && [ "$pid$plv$id$lv" = h51d71 ]; then W=$(( W + 1 ))
+    elif [ "$look" = chips ] && pair "$pid$plv$id$lv"; then W=$(( W + 1 ))
     else W=$(( W + SEPW )); fi
     W=$(( W + ${!v} )); prev="$g"; pid="$id"; plv="$lv"
   done
@@ -695,12 +974,26 @@ if [ "$cols" -gt 0 ]; then
   # a calm window is hidden before the context; one on pace to run dry outlives everything but the model
   h5q="h5:0"; [ "$ST_h5" = "calm" ] || h5q=""
   d7q="d7:0"; [ "$ST_d7" = "calm" ] || d7q=""
+  bkq="bk:0"; [ "$ST_bk" = "calm" ] || bkq=""
+  # In a fleet: the account's slug goes right after the cost (acq), unless the machine has
+  # just switched: then it is why the numbers changed, and it stays until the dirty counts
+  # would have to go (acz).
+  # A quiet count of the accounts left goes early (flq), a short one outlives everything but
+  # the windows' alarms (flz), and its countdown goes with the smaller details (fleet:1). Of
+  # the week and the bucket, the one with more room under its cap goes with the dirty counts,
+  # before the effort, the bar and the 5h countdown, if it is calm (nbq).
+  # Outside git the session's name is the place's widest and least needed piece (the window's
+  # title says it too): it goes before the quiet cache does (snq).
+  acq="acct:0"; acz=""; [ "$switched" -eq 1 ] && { acq=""; acz="acct:0"; }
+  snq=""; [ -z "$g_root" ] && [ "$LV_loc" -eq 3 ] && snq="loc:2"
+  flq="fleet:0"; flz=""; [ "$ST_fleet" = "calm" ] || { flq=""; flz="fleet:0"; }
+  nbq=""; if [ -n "$nb" ]; then st="ST_$nb"; [ "${!st}" = "calm" ] && nbq="${nb}:0"; fi
   undo=""
-  # The context's size suffix and used/size are its first details to go (ctx:3, ctx:2); the ✻
+  # The context's size suffix is its first detail to go (ctx:2); the ✻
   # is the row's bookend and goes just before the effort (model:2), after every smaller piece,
   # so it comes and goes only where the bar or the 5h countdown needs its two cells.
-  for step in cost:1 cost:0 model:3 ctx:3 ctx:2 $cq $aq loc:3 bus:2 d7:1 loc:2 $au $cu model:2 model:1 ctx:1 h5:1 loc:1 \
-              $cz loc:0 bus:1 $d7q $h5q ctx:0 bus:0 d7:0 h5:0; do
+  for step in cost:1 cost:0 $acq $flq model:3 ctx:2 $snq $cq $aq loc:3 bus:2 d7:1 fleet:1 $acz loc:2 $nbq $au $cu model:2 model:1 ctx:1 h5:1 loc:1 \
+              $cz loc:0 bus:1 $d7q $bkq $h5q ctx:0 bus:0 $flz d7:0 bk:0 h5:0; do
     width; [ "$W" -le "$max" ] && break
     id="${step%%:*}"; fl="${step##*:}"; n="LV_$id"
     while width && [ "$W" -gt "$max" ]; do
@@ -711,6 +1004,8 @@ if [ "$cols" -gt 0 ]; then
   # Hiding one wide piece late (a long bus warning, the place) can leave room for pieces that
   # went earlier: give each back, the last one lowered first, wherever it still fits.
   for u in $undo; do
+    # the week's countdown never comes back while the 5h one, the owner's priority, is still hidden
+    case "$u" in d7:2) [ "$LV_h5" -eq 1 ] && [ -n "${P_h5_2:-}" ] && continue ;; esac
     id="${u%%:*}"; n="LV_$id"; cur="${!n}"
     printf -v "$n" '%s' "${u##*:}"; width
     [ "$W" -le "$max" ] || printf -v "$n" '%s' "$cur"
@@ -733,22 +1028,38 @@ fi
 
 # Draw. A chip: its left cap in the ground's color on the terminal's own background, the
 # content on the ground, then a full reset and the right cap the same way.
+# A group whose worst visible piece is over or spent sits on a tinted ground (GK_<group>), so
+# the alarm reads out of the corner of the eye; watch stays a matter of the text's color. On a
+# tinted ground the labels and the gauge's track step up one tone to stay legible.
+GK_2=""; GK_3=""
+if [ "$look" = chips ]; then
+  for id in ctx h5 d7 bk fleet; do
+    n="LV_$id"; [ "${!n}" -gt 0 ] || continue
+    st="ST_$id"; g="GROUP_$id"; gk="GK_${!g}"
+    case "${!st}" in
+      crit) printf -v "$gk" '%s' "$K_FAIL" ;;
+      over) [ -n "${!gk}" ] || printf -v "$gk" '%s' "$K_OVER" ;;
+    esac
+  done
+fi
 out=""; prev=0; pid=""; plv=0; kc="$K_CHIP"
 for id in $ORDER; do
   n="LV_$id"; lv="${!n}"; [ "$lv" -gt 0 ] || continue
-  v="T_${id}_${lv}"; g="GROUP_$id"; g="${!g}"
+  v="T_${id}_${lv}"; g="GROUP_$id"; g="${!g}"; t="${!v}"
   if [ "$look" = chips ]; then
+    gk="GK_$g"; gk="${!gk:-}"
     if [ "$g" -ne "$prev" ]; then
       [ "$prev" -eq 0 ] || out="${out}${rz}${e}[38;2;${kc}m${CR}${rz} "
-      k="KO_${id}_${lv}"; k="${!k:-$K_CHIP}"
+      k="KO_${id}_${lv}"; k="${!k:-${gk:-$K_CHIP}}"
       out="${out}${e}[38;2;${k}m${CL}${e}[48;2;${k}m"
-    elif [ "$pid$plv$id$lv" = h51d71 ]; then out="${out} "
+    elif pair "$pid$plv$id$lv"; then out="${out} "
     else out="${out} ${c_dot}·${rst} "; fi
-    k="KC_${id}_${lv}"; kc="${!k:-$K_CHIP}"
+    k="KC_${id}_${lv}"; kc="${!k:-${gk:-$K_CHIP}}"
+    [ -n "$gk" ] && { t="${t//"$c_lab"/$c_lab2}"; t="${t//"$c_rail"/$c_dot}"; }
   elif [ "$prev" -ne 0 ]; then
     if [ "$g" -eq "$prev" ]; then out="${out} ${c_dot}·${rst} "; else out="${out} ${c_rail}│${rst} "; fi
   fi
-  prev="$g"; pid="$id"; plv="$lv"; out="${out}${!v}"
+  prev="$g"; pid="$id"; plv="$lv"; out="${out}${t}"
 done
 [ "$look" = chips ] && [ "$prev" -ne 0 ] && out="${out}${rz}${e}[38;2;${kc}m${CR}${rz}"
 printf '%s' "$out"
@@ -756,10 +1067,10 @@ printf '%s' "$out"
 # --- housekeeping: once a day, drop per-session files nobody touched for 3 days ---------------
 case "$STATE" in /*/*) [ -d "$STATE" ] && prune_ok=1 ;; esac
 if [ "${prune_ok:-0}" -eq 1 ]; then
-  pruned=0; [ -f "$STATE/.pruned" ] && { IFS= read -r pruned 2>/dev/null < "$STATE/.pruned"; int "$pruned" 0; pruned="$R"; }
+  pruned=0; [ -f "$STATE/.pruned" ] && { IFS= read -r -n 64 pruned 2>/dev/null < "$STATE/.pruned"; int "$pruned" 0; pruned="$R"; }
   if [ "$pruned" -gt "$now" ] || [ $(( now - pruned )) -gt 86400 ]; then
-    printf '%s\n' "$now" 2>/dev/null > "$STATE/.pruned"
-    ( find "$STATE/bus" "$STATE/git" "$STATE/spend" -depth -mindepth 1 -mtime +3 -delete ) >/dev/null 2>&1 &
+    { [ ! -e "$STATE/.pruned" ] || [ -f "$STATE/.pruned" ]; } && printf '%s\n' "$now" 2>/dev/null > "$STATE/.pruned"
+    ( find "$STATE/bus" "$STATE/git" "$STATE/spend" "$STATE/pin" -depth -mindepth 1 -mtime +3 -delete ) >/dev/null 2>&1 &
   fi
 fi
 exit 0

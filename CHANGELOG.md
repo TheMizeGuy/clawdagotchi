@@ -4,6 +4,15 @@ The coworker's history, carried over from the private tree it was built in (the 
 history lives with its tests; its look changed on 2026-10-02 with the chips, the gradient gauge, the
 vitals file and the reserve default).
 
+## The status line, and the agent panel rows (2026-11-11)
+
+- New: `statusline/subagent-statusline.sh`, Claude Code's `subagentStatusLine` command. The rows of the agent panel under the prompt as one aligned table: model class, name, what the agent is doing or how it ended, a trace of its token growth, age, tokens. Nothing shifts between refreshes; the trace gives way to the labels as the panel narrows. 224 checks.
+- The status line follows a machine that rotates over accounts, when you give it a helper that lists them (`STATUSLINE_FLEET_CMD`; the format is in the script's header): the account's name, its week, a model bucket, how many other accounts have room, and `cache cold` in a tab the switch left behind. Without a helper nothing changes. 430 checks.
+- Quieter: the effort shows only when it is not `xhigh`, the window size only when it is not 1M, and the used/size detail is gone. Countdowns keep their width for the hour (`2h09m`, `09m`).
+- A group that is over its limit or spent sits on a tinted ground. The repo's name links to its page and a path outside git to the folder; outside git the session's name follows the path.
+- The usage cache takes a payload that carries a seven-day window alone (it had needed a 5-hour one), and an ended 5-hour window no longer blocks an update.
+- Hardening from two review rounds: every number is normalized before arithmetic (a crafted number in a cache file could run a command), character sets are spelled out (bash 3.2 lets accented letters through `[A-Za-z]`), and no state file is opened for writing unless it is a regular file.
+- The gallery (`statusline/samples.sh`) shows the fleet rows and the agent panel rows, and `SAMPLES` picks sections.
 ## mize-coworker 0.6.1 (2026-11-11)
 
 A session frozen for 20 s or more (memory starvation: many agents beside a local build, swap nearly full) could have the engine end the hooks worker every mod shares, naming this mod: `mize-coworker ignored its signal 2 times in a row: a runaway plugin in the hooks worker`. In Claude Code 2.1.322 a hook's 10 s budget pauses while it awaits `next()` or most `$` calls but not while it awaits `$.clock.now` or `$.clock.sleep`; a hook still unsettled 5 s past its budget is an overrun, and two overruns by one mod end the worker, rejecting every hook in flight, any other mod's guard hooks included. The coworker awaited `$.clock.now` in every tool hook, stop hook and render hook, so a frozen host made it the mod named.
