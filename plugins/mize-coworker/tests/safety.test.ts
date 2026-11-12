@@ -6,9 +6,83 @@
 // each test ends by asserting there is none.
 
 import type { On } from 'claude-code'
-import { expect, mock, test, tier, type Engine } from 'claude-code/testing'
+import { expect, mock as kit, test as kitTest, tier, type Engine, type TestBody, type TestRest } from 'claude-code/testing'
 
 tier('append')
+
+// The hooks leave their bookkeeping for after they return (no hook waits on the
+// clock: hooks/register.tsx `later`), so a step a test drives is done only once
+// that work has settled. `test` hands each test a `$` whose session, turn, tool,
+// classic and command dispatches settle the test's clock (`mock.clock`) before
+// they resolve, or, in a test that stubs the clock by hand, let the event loop
+// turn; tests in a file run one at a time, so one clock is under way.
+let clockNow: ReturnType<typeof kit.clock> | undefined
+
+/** The runtime's timer: the kit's types name none. */
+declare function setTimeout(run: () => void, ms: number): unknown
+
+/** A few turns of the event loop: enough for work that waits on nothing but the test's own stubs. */
+async function turns(): Promise<void> {
+  for (let i = 0; i < 8; i += 1) {
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+  }
+}
+
+const mock: typeof kit = { ...kit, clock: (...args: Parameters<typeof kit.clock>) => (clockNow = kit.clock(...args)) }
+const DRIVEN = new Set(['session', 'turn', 'tool', 'classic', 'command'])
+
+function settling($: Engine): Engine {
+  const spaces = $ as unknown as Record<string, Record<string, unknown>>
+
+  return new Proxy(
+    {},
+    {
+      get(_, space: string) {
+        const real = spaces[space]
+
+        if (!DRIVEN.has(space) || real === undefined) {
+          return real
+        }
+
+        return new Proxy(
+          {},
+          {
+            get(__, name: string) {
+              const act = real[name]
+
+              if (typeof act !== 'function') {
+                return act
+              }
+
+              return async (...args: unknown[]) => {
+                const out: unknown = await (act as (...given: unknown[]) => unknown)(...args)
+
+                await (clockNow === undefined ? turns() : clockNow.settle())
+
+                return out
+              }
+            },
+          },
+        )
+      },
+    },
+  ) as Engine
+}
+
+const test = (name: string, ...rest: TestRest): void => {
+  const body = rest.length === 1 ? rest[0] : rest[1]
+  const settled: TestBody = ($, on) => {
+    clockNow = undefined
+
+    return body(settling($), on)
+  }
+
+  if (rest.length === 1) {
+    kitTest(name, settled)
+  } else {
+    kitTest(name, rest[0], settled)
+  }
+}
 
 const START = 1_000_000
 const EVENTS = [
@@ -313,6 +387,47 @@ test('a clock that refuses everything: no hook of the plugin is skipped', { plug
   await drive($, w)
   expect(failed(w)).toEqual([])
   expect(w.links.length).toBeGreaterThanOrEqual(EVENTS.length)
+})
+
+// A host that stalls leaves a clock read unanswered. A hook that waited on one would run out its
+// 10 s (a wait on the clock counts against them), and two such overruns have the engine end the
+// worker every mod shares, in this mod's name (2026-11-10 and 11-11, under memory starvation).
+test('a clock that never answers: every hook but /coworker still returns, and the footer, the spinner and the band are drawn', { plugins: [sentinel] }, async ($, on) => {
+  const w = stubs(on)
+
+  on('clock.now', () => new Promise<never>(() => undefined))
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await band($)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  // a subagent's turn start, should the engine ever raise one
+  await $.turn.start({ text: 'go', turnId: 't2', agentId: 'agent-7' } as never)
+  await $.tool.call({ tool: 'Read', file_path: '/work/a.ts' } as never)
+  await $.classic.PostToolUse({ tool_name: 'Read', tool_input: { file_path: '/work/a.ts' }, tool_response: 'ok', tool_use_id: w.toolIds.at(-1) ?? '' })
+  await $.tool.call({ tool: 'Bash', command: 'false' } as never)
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'false' } })
+  await $.classic.PostToolUseFailure({ tool_name: 'Bash', tool_input: { command: 'false' }, tool_use_id: w.toolIds.at(-1) ?? '', error: 'exit 1' } as never)
+  await $.classic.PermissionDenied({ tool_name: 'Edit', tool_input: {}, tool_use_id: 'x', reason: 'denied' } as never)
+
+  const spinner = await $.ui.mount({ plugin: 'mize-coworker', surface: 'terminal', component: 'Spinner', requestId: 'main', props: { word: 'Sauteing', message: null, suffix: '…', mode: 'thinking' } } as never)
+
+  expect(await spinner.find({ type: 'Image' })).toBeDefined()
+  await spinner.unmount()
+
+  const footer = await $.ui.mount({ plugin: 'mize-coworker', surface: 'terminal', component: 'SessionMode', requestId: 'session-mode', props: { modes: ['focus'] } } as never)
+
+  expect(await footer.find({ type: 'Image' })).toBeDefined()
+  await footer.unmount()
+
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: [] } as never)
+  await $.classic.SubagentStop({ stop_hook_active: false, agent_id: 'agent-7', background_tasks: [] } as never)
+  await $.turn.complete({ turnId: 't2', answer: 'ok', durationMs: 5, isAborted: false, reason: 'answer', agentId: 'agent-7' })
+  await $.turn.complete({ turnId: 't1', answer: 'ok', durationMs: 5, isAborted: false, reason: 'answer' })
+  await $.classic.SessionStart({ source: 'clear', session_id: 'sess-2' })
+  await $.session.end({ reason: 'other', sessionId: 's1', resume: { id: 's1' } })
+
+  expect(failed(w)).toEqual([])
+  // every event but /coworker, which is not driven here: its answer waits on the clock
+  expect(new Set(w.links.map(link => link.split(' ')[0]))).toEqual(new Set(EVENTS.filter(event => event !== 'command.run')))
 })
 
 test('a filesystem, environment and session id that refuse: no hook of the plugin is skipped', { plugins: [sentinel] }, async ($, on) => {

@@ -231,7 +231,7 @@ The pieces on their own:
 
 | Command | What it does |
 |---|---|
-| `claude plugin test plugins/mize-coworker` | runs the plugin's 190 tests |
+| `claude plugin test plugins/mize-coworker` | runs the plugin's 196 tests |
 | `python3 -m unittest discover -s plugins/mize-coworker/tests -p 'test_*.py'` | checks the frame contract (standard library only) |
 | `bash statusline/tests/test-statusline.sh` | runs the status line's 452 rendering checks, under the first `bash` on your PATH and under `/bin/bash` |
 | `bash statusline/tests/test-statusline-usage-cache.sh` | runs the 24 checks of the shared usage cache |

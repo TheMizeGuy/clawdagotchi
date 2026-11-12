@@ -288,7 +288,19 @@ const S = {
   demoTimer: null as Timer | null,
   /** What was last written as the tour's step: '' for none, '?' when a write failed (the next one always goes). */
   demoKey: '',
+  /** What the hooks left to be done once they had returned (`later`): one at a time, in the order asked, and how much of it waits. */
+  queue: { tail: Promise.resolve() as Promise<void>, waiting: 0 },
+  /** The main loop's spinner has him: it drew him within SPINNER_FRESH_MS (a turn start counts), as last worked out. */
+  isSeated: false,
+  /** Ends the seat when the spinner has been silent for SPINNER_FRESH_MS: one `after` at a time. */
+  seatWatch: null as Timer | null,
 }
+
+/**
+ * With this much work waiting, something ahead of it never finished (a `$` call
+ * the host never answered): the work that follows starts over, past it.
+ */
+const QUEUE_MAX = 256
 
 /** How old a reserve may get before a turn start writes it again: the status line's sweep deletes files untouched for 3 days. */
 const RESERVE_REFRESH_MS = 24 * 60 * 60_000
@@ -347,6 +359,8 @@ function cancelTimers(): void {
   stopWander()
   S.demoTimer = stop(S.demoTimer)
   S.demo = undefined
+  S.seatWatch = stop(S.seatWatch)
+  S.isSeated = false
 }
 
 function isDrawing(): boolean {
@@ -1113,11 +1127,141 @@ async function nowOf($: EngineInterface): Promise<number | undefined> {
   }
 }
 
-/** True while the main loop's spinner drew Claude within SPINNER_FRESH_MS: his seat there still holds. */
-async function isSpinnerFresh($: EngineInterface): Promise<boolean> {
+/** Runs `work` once everything left before it is done. Never throws. */
+function queue($: EngineInterface, work: () => Promise<void>): void {
+  if (S.queue.waiting >= QUEUE_MAX) {
+    debug($, `${S.queue.waiting} pieces of work waited on one that never finished: begun again past them`)
+    S.queue = { tail: Promise.resolve(), waiting: 0 }
+  }
+
+  const line = S.queue
+
+  line.waiting += 1
+  line.tail = line.tail.then(async () => {
+    try {
+      await work()
+    } catch (error) {
+      debug($, `work left for later failed: ${messageOf(error)}`)
+    } finally {
+      line.waiting -= 1
+    }
+  })
+}
+
+/**
+ * Leaves `work` for after the hook that asks has returned. A hook's wait on
+ * the clock counts against its 10 s, unlike its other `$` calls
+ * (docs/BUILD-SPEC.md rule 4): when the host stalls, a hook waiting there
+ * overruns, and two overruns have the engine end the worker every mod shares,
+ * in this mod's name. So no hook waits on the clock. It is asked at once (the
+ * time is the event's) and `work` runs in the order asked, unless the session
+ * has ended for good by then; `otherwise` runs in its place when the clock
+ * cannot be read. Never throws.
+ */
+function later($: EngineInterface, what: string, work: (now: number) => Promise<void>, otherwise?: () => void): void {
+  const asked = nowOf($)
+
+  queue($, async () => {
+    try {
+      const now = await asked
+
+      if (!isLive()) {
+        return
+      }
+
+      if (now === undefined) {
+        otherwise?.()
+      } else {
+        await work(now)
+      }
+    } catch (error) {
+      debug($, `${what}: ${messageOf(error)}`)
+    }
+  })
+}
+
+/**
+ * The main loop's spinner has Claude as of `now` (it drew him, or its turn
+ * began): his seat there holds until the spinner has been silent for
+ * SPINNER_FRESH_MS, which a timer watches for, since the footer's render hook
+ * cannot ask the clock (`later`).
+ */
+function seat($: EngineInterface, now: number): void {
+  S.spinnerAt = Math.max(S.spinnerAt, now)
+
+  // no seat where he cannot sit (the options), nor in a session that has ended
+  if (!isLive() || !isBesideOn()) {
+    return
+  }
+
+  S.isSeated = true
+  watchSeat($, now)
+}
+
+/** One `after` for the end of the seat: SPINNER_FRESH_MS past the spinner's last drawing of him. Never throws. */
+function watchSeat($: EngineInterface, now: number): void {
+  if (S.seatWatch !== null) {
+    return
+  }
+
+  try {
+    S.seatWatch = $.clock.after(Math.max(1, S.spinnerAt + SPINNER_FRESH_MS + 1 - now), () => {
+      void unseat($)
+    })
+  } catch (error) {
+    // unwatched, the seat lasts until the turn ends
+    debug($, `seat not watched: ${messageOf(error)}`)
+  }
+}
+
+/**
+ * The seat watch's body: the spinner has not drawn him for SPINNER_FRESH_MS,
+ * so the footer has him and is asked to draw again; or it has, and the watch
+ * goes on from its last drawing. Never throws.
+ */
+async function unseat($: EngineInterface): Promise<void> {
+  S.seatWatch = null
+
+  // with `animate` off nothing redraws the spinner between events, so while its turn runs its silence
+  // says nothing (isMainResting): the seat holds until the turn ends
+  if (!S.isSeated || (!S.options.animate && S.model.isTurnRunning)) {
+    return
+  }
+
   const now = await nowOf($)
 
-  return now !== undefined && now - S.spinnerAt <= SPINNER_FRESH_MS
+  if (now !== undefined && now - S.spinnerAt <= SPINNER_FRESH_MS) {
+    watchSeat($, now)
+
+    return
+  }
+
+  S.isSeated = false
+  redraw($)
+}
+
+/**
+ * The main loop's spinner drew Claude: notes when, outside its render hook
+ * (`later`). The footer still had him if his seat had lapsed: it gives him up
+ * now, not at his next frame (and when the main loop was taken to be resting
+ * while its spinner was quiet, the next breath or step of a move sees that it
+ * is back: a render hook cannot write state). Never throws.
+ */
+async function sat($: EngineInterface): Promise<void> {
+  const now = await nowOf($)
+
+  if (now === undefined || !isLive()) {
+    return
+  }
+
+  const wasStale = !S.isSeated || now - S.spinnerAt > SPINNER_FRESH_MS
+
+  seat($, now)
+
+  // only when the seat was taken: a redraw draws the spinner again, which comes back here
+  if (wasStale && S.isSeated) {
+    redraw($)
+  }
 }
 
 /** Starts the session's coworker; on a hot reload, takes over what $.state holds. */
@@ -1331,27 +1475,21 @@ function loopOf(e: unknown): string {
 }
 
 /** A tool call of `loop` ended (done, failed or denied); `isFailure` when it failed. */
-async function ended($: EngineInterface, id: string, tool: string, input: unknown, loop: string, isFailure = false): Promise<void> {
+function ended($: EngineInterface, id: string, tool: string, input: unknown, loop: string, isFailure = false): void {
   if (!isLive()) {
     return
   }
 
-  try {
-    const now = await nowOf($)
+  later($, 'tool end not recorded', async now => {
+    toolEnded(S.model, id, tool, input, now, loop)
 
-    if (now !== undefined) {
-      toolEnded(S.model, id, tool, input, now, loop)
-
-      // a flinch for the main loop's own failed call; an agent's failures are its own business
-      if (isFailure && loop === '' && S.gestures) {
-        toolFailed(S.model, now)
-      }
-
-      await refresh($, now)
+    // a flinch for the main loop's own failed call; an agent's failures are its own business
+    if (isFailure && loop === '' && S.gestures) {
+      toolFailed(S.model, now)
     }
-  } catch (error) {
-    debug($, `tool end not recorded: ${messageOf(error)}`)
-  }
+
+    await refresh($, now)
+  })
 }
 
 /**
@@ -1359,21 +1497,15 @@ async function ended($: EngineInterface, id: string, tool: string, input: unknow
  * the main loop's stop, the word on which agents still run); an event without
  * the list changes nothing.
  */
-async function background($: EngineInterface, tasks: unknown, isMain: boolean): Promise<void> {
+function background($: EngineInterface, tasks: unknown, isMain: boolean): void {
   if (!isLive() || !Array.isArray(tasks)) {
     return
   }
 
-  try {
-    const now = await nowOf($)
-
-    if (now !== undefined) {
-      backgroundSeen(S.model, backgroundOf(tasks), now, isMain)
-      await refresh($, now)
-    }
-  } catch (error) {
-    debug($, `background work not recorded: ${messageOf(error)}`)
-  }
+  later($, 'background work not recorded', async now => {
+    backgroundSeen(S.model, backgroundOf(tasks), now, isMain)
+    await refresh($, now)
+  })
 }
 
 /** `/coworker off` and `/coworker on`. */
@@ -1499,6 +1631,9 @@ export const register: Register = (on, options) => {
   S.demo = undefined
   S.demoTimer = null
   S.demoKey = ''
+  S.queue = { tail: Promise.resolve(), waiting: 0 }
+  S.isSeated = false
+  S.seatWatch = null
 
   on('session.start', async ($, e, next) => {
     try {
@@ -1522,7 +1657,12 @@ export const register: Register = (on, options) => {
     }
 
     if (e.isInteractive) {
-      await start($)
+      // once this hook has returned: start reads the clock (`later`)
+      queue($, async () => {
+        if (isLive()) {
+          await start($)
+        }
+      })
     } else {
       cancelTimers()
     }
@@ -1537,24 +1677,32 @@ export const register: Register = (on, options) => {
     const result = await next(e)
 
     if (S.isInteractive && e.source !== 'startup' && e.source !== 'compact') {
-      try {
-        S.isEnded = false
-        await endDemo($)
-        await readSessionId($, e.session_id)
-        await adopt($)
-        await reserve($)
-        await reserveDefault($)
+      const id = e.session_id
 
-        const now = await nowOf($)
+      S.isEnded = false
+      queue($, async () => {
+        try {
+          if (!isLive()) {
+            return
+          }
 
-        if (now !== undefined) {
-          await refresh($, now)
+          await endDemo($)
+          await readSessionId($, id)
+          await adopt($)
+          await reserve($)
+          await reserveDefault($)
+
+          const now = await nowOf($)
+
+          if (now !== undefined) {
+            await refresh($, now)
+          }
+
+          redraw($)
+        } catch (error) {
+          debug($, `new session not adopted: ${messageOf(error)}`)
         }
-
-        redraw($)
-      } catch (error) {
-        debug($, `new session not adopted: ${messageOf(error)}`)
-      }
+      })
     }
 
     return result
@@ -1580,62 +1728,61 @@ export const register: Register = (on, options) => {
   // The main loop's turn: a subagent's run raises no turn.start (and the check is kept in case one does).
   on('turn.start', async ($, e, next) => {
     if (isLive() && (e as { agentId?: unknown }).agentId === undefined) {
-      try {
-        // the tour plays between turns: a new one ends it
-        await endDemo($)
-
-        const now = await nowOf($)
-
-        if (now !== undefined) {
+      later(
+        $,
+        'turn start not recorded',
+        async now => {
+          // the tour plays between turns: a new one ends it
+          await endDemo($)
           turnStarted(S.model, now)
-          S.spinnerAt = now
+          seat($, now)
           await refresh($, now)
 
           // a session open for days: keep the reserve file younger than the status line's sweep
           if (S.reserve !== undefined && S.reserve.line !== '' && now - S.reserve.at > RESERVE_REFRESH_MS) {
             await reserve($, true)
           }
-        }
-      } catch (error) {
-        debug($, `turn start not recorded: ${messageOf(error)}`)
-      }
+        },
+        () => {
+          void endDemo($)
+        },
+      )
     }
 
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
-    if (isLive() && e.agentId !== undefined) {
-      try {
-        const now = await nowOf($)
+    const { agentId, durationMs } = e
+    const isAnswer = !e.isAborted && e.reason === 'answer'
 
-        // an agent's run ended: a dialog of its cannot still be open, and it is no longer at work; one
-        // that ended with an answer while the main loop rested leaves a report for Claude to be brought
-        agentEnded(S.model, e.agentId, now === undefined ? undefined : { at: now, isResting: isMainResting(now), isAnswer: !e.isAborted && e.reason === 'answer' })
-
-        if (now !== undefined) {
+    if (isLive() && agentId !== undefined) {
+      // an agent's run ended: a dialog of its cannot still be open, and it is no longer at work; one
+      // that ended with an answer while the main loop rested leaves a report for Claude to be brought
+      later(
+        $,
+        'agent end not recorded',
+        async now => {
+          agentEnded(S.model, agentId, { at: now, isResting: isMainResting(now), isAnswer })
           await refresh($, now)
           await bringReport($, now)
-        }
-      } catch (error) {
-        debug($, `agent end not recorded: ${messageOf(error)}`)
-      }
+        },
+        () => {
+          agentEnded(S.model, agentId, undefined)
+        },
+      )
     }
 
-    if (isLive() && e.agentId === undefined) {
-      try {
-        const now = await nowOf($)
-
-        if (now !== undefined) {
-          // a hop for a turn that ended with an answer (a cheer after a long one), none after an interrupt or an error
-          turnEnded(S.model, now, S.gestures && !e.isAborted && e.reason === 'answer', e.durationMs)
-          // the engine takes its spinner down with the turn: the footer has him at once
-          S.spinnerAt = 0
-          await refresh($, now)
-        }
-      } catch (error) {
-        debug($, `turn end not recorded: ${messageOf(error)}`)
-      }
+    if (isLive() && agentId === undefined) {
+      later($, 'turn end not recorded', async now => {
+        // a hop for a turn that ended with an answer (a cheer after a long one), none after an interrupt or an error
+        turnEnded(S.model, now, S.gestures && isAnswer, durationMs)
+        // the engine takes its spinner down with the turn: the footer has him at once
+        S.spinnerAt = 0
+        S.isSeated = false
+        S.seatWatch = stop(S.seatWatch)
+        await refresh($, now)
+      })
     }
 
     return next(e)
@@ -1646,35 +1793,29 @@ export const register: Register = (on, options) => {
     const result = await next(e)
 
     if (isLive() && result.deny === undefined) {
-      try {
-        const now = await nowOf($)
-
-        if (now !== undefined) {
-          toolStarted(S.model, e.tool_use_id, String(e.tool), e, now, loopOf(e))
-          await refresh($, now)
-        }
-      } catch (error) {
-        debug($, `tool start not recorded: ${messageOf(error)}`)
-      }
+      later($, 'tool start not recorded', async now => {
+        toolStarted(S.model, e.tool_use_id, String(e.tool), e, now, loopOf(e))
+        await refresh($, now)
+      })
     }
 
     return result
   })
 
   on('classic.PostToolUse', async ($, e, next) => {
-    await ended($, e.tool_use_id, e.tool_name, e.tool_input, loopOf(e))
+    ended($, e.tool_use_id, e.tool_name, e.tool_input, loopOf(e))
 
     return next(e)
   })
 
   on('classic.PostToolUseFailure', async ($, e, next) => {
-    await ended($, e.tool_use_id, e.tool_name, e.tool_input, loopOf(e), true)
+    ended($, e.tool_use_id, e.tool_name, e.tool_input, loopOf(e), true)
 
     return next(e)
   })
 
   on('classic.PermissionDenied', async ($, e, next) => {
-    await ended($, e.tool_use_id, e.tool_name, e.tool_input, loopOf(e))
+    ended($, e.tool_use_id, e.tool_name, e.tool_input, loopOf(e))
 
     return next(e)
   })
@@ -1685,16 +1826,13 @@ export const register: Register = (on, options) => {
     const result = await next(e)
 
     if (isLive() && (result as { decision?: unknown }).decision === undefined) {
-      try {
-        const now = await nowOf($)
+      const loop = loopOf(e)
+      const tool = e.tool_name
 
-        if (now !== undefined) {
-          permissionAsked(S.model, now, loopOf(e), e.tool_name)
-          await refresh($, now)
-        }
-      } catch (error) {
-        debug($, `permission ask not recorded: ${messageOf(error)}`)
-      }
+      later($, 'permission ask not recorded', async now => {
+        permissionAsked(S.model, now, loop, tool)
+        await refresh($, now)
+      })
     }
 
     return result
@@ -1704,13 +1842,13 @@ export const register: Register = (on, options) => {
   // main loop rests, Claude minds them (supervising); shells and monitors keep nothing busy.
   on('classic.Stop', async ($, e, next) => {
     // the main loop's stop is the word on the agents; one raised inside an agent's loop is not
-    await background($, e.background_tasks, loopOf(e) === '')
+    background($, e.background_tasks, loopOf(e) === '')
 
     return next(e)
   })
 
   on('classic.SubagentStop', async ($, e, next) => {
-    await background($, (e as { background_tasks?: unknown }).background_tasks, false)
+    background($, (e as { background_tasks?: unknown }).background_tasks, false)
 
     return next(e)
   })
@@ -1763,7 +1901,7 @@ export const register: Register = (on, options) => {
       // the spinner too: that is how it notices the spinner has stopped drawing him
       const view = spot === undefined ? undefined : normalView(await read($, VIEW))
       // his seat beside the spinner holds while that site keeps drawing him, wherever the spot says he is
-      const isBeside = spot !== undefined && isBesideOn() && (await isSpinnerFresh($))
+      const isBeside = spot !== undefined && isBesideOn() && S.isSeated
 
       if (spot !== undefined && view !== undefined && !isBeside) {
         const size = sizeNow()
@@ -1840,16 +1978,7 @@ export const register: Register = (on, options) => {
           const frame = spinnerFrame(scene, S.options.scenes, sizeNow())
 
           claude = { alt: brailleOf(frame), file: frameFile(rootOf($), frame), frame }
-          const wasStale = !(await isSpinnerFresh($))
-
-          S.spinnerAt = (await nowOf($)) ?? S.spinnerAt
-
-          // the footer still had him: it gives him up now, not at his next frame (and when the main
-          // loop was taken to be resting while its spinner was quiet, the next breath or step of a
-          // move sees that it is back: a render hook cannot write state)
-          if (wasStale) {
-            redraw($)
-          }
+          void sat($)
         }
       }
     } catch (error) {

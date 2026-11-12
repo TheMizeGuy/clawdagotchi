@@ -10,9 +10,83 @@
 // throw.
 
 import type { On, PromptOrigin } from 'claude-code'
-import { expect, mock, test, type Engine } from 'claude-code/testing'
+import { expect, mock as kit, test as kitTest, type Engine, type TestBody, type TestRest } from 'claude-code/testing'
 
 import { DEMO_ACTS, demoActs, demoSteps } from '../hooks/lib/demo'
+
+// The hooks leave their bookkeeping for after they return (no hook waits on the
+// clock: hooks/register.tsx `later`), so a step a test drives is done only once
+// that work has settled. `test` hands each test a `$` whose session, turn, tool,
+// classic and command dispatches settle the test's clock (`mock.clock`) before
+// they resolve, or, in a test that stubs the clock by hand, let the event loop
+// turn; tests in a file run one at a time, so one clock is under way.
+let clockNow: ReturnType<typeof kit.clock> | undefined
+
+/** The runtime's timer: the kit's types name none. */
+declare function setTimeout(run: () => void, ms: number): unknown
+
+/** A few turns of the event loop: enough for work that waits on nothing but the test's own stubs. */
+async function turns(): Promise<void> {
+  for (let i = 0; i < 8; i += 1) {
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+  }
+}
+
+const mock: typeof kit = { ...kit, clock: (...args: Parameters<typeof kit.clock>) => (clockNow = kit.clock(...args)) }
+const DRIVEN = new Set(['session', 'turn', 'tool', 'classic', 'command'])
+
+function settling($: Engine): Engine {
+  const spaces = $ as unknown as Record<string, Record<string, unknown>>
+
+  return new Proxy(
+    {},
+    {
+      get(_, space: string) {
+        const real = spaces[space]
+
+        if (!DRIVEN.has(space) || real === undefined) {
+          return real
+        }
+
+        return new Proxy(
+          {},
+          {
+            get(__, name: string) {
+              const act = real[name]
+
+              if (typeof act !== 'function') {
+                return act
+              }
+
+              return async (...args: unknown[]) => {
+                const out: unknown = await (act as (...given: unknown[]) => unknown)(...args)
+
+                await (clockNow === undefined ? turns() : clockNow.settle())
+
+                return out
+              }
+            },
+          },
+        )
+      },
+    },
+  ) as Engine
+}
+
+const test = (name: string, ...rest: TestRest): void => {
+  const body = rest.length === 1 ? rest[0] : rest[1]
+  const settled: TestBody = ($, on) => {
+    clockNow = undefined
+
+    return body(settling($), on)
+  }
+
+  if (rest.length === 1) {
+    kitTest(name, settled)
+  } else {
+    kitTest(name, rest[0], settled)
+  }
+}
 
 const PLUGIN = 'mize-coworker'
 const IDLE = '⢼⢽⠿⡯⡧'
@@ -1274,7 +1348,9 @@ test('a refused /coworker off changes nothing: the next call is still narrated a
   expect(await spinnerText($)).toBe('Reading register.ts…')
 })
 
-test('a session open for days rewrites its reserve at a turn start, inside the status line\'s sweep window', async ($, on) => {
+// 25 mock-clock hours, each firing the sleep loop's 3 s frame wait 1200 times: about 6 s on a
+// loaded machine (load 44, 2026-10-24), where the kit's 5 s default ran out four runs of four.
+test('a session open for days rewrites its reserve at a turn start, inside the status line\'s sweep window', { timeoutMs: 30_000 }, async ($, on) => {
   const w = world()
   const files: BusFile[] = []
 
@@ -2830,3 +2906,134 @@ test('a tour step the host refuses to keep is logged and the tour goes on; nothi
   // the next step goes through
   expect((await bandOf($)).texts.at(-2)).toMatch(/ · /)
 })
+
+// ---------------------------------------------------------------------------
+// The work the hooks leave for after they return (0.6.1), and the seat beside the spinner
+
+test('the seat beside the spinner lasts 2.5 s from the spinner\'s last drawing of him, not from the turn\'s start', { options: { gestures: false }, plugins: [observer] }, async ($, on) => {
+  const w = world()
+
+  stubs(on, w)
+  const clock = mock.clock(on, { now: START })
+
+  await start($)
+  await turnStart($)
+  await clock.advance(2_000)
+  const ui = await spinner($)
+
+  await ui.unmount()
+  // past the turn start's grace, inside the drawing's: still the spinner's
+  await clock.advance(1_000)
+  expect(await spritePiece($, ['focus'])).toBeUndefined()
+  // 2.5 s past the drawing: the footer's
+  await clock.advance(1_501)
+  expect(await spritePiece($, ['focus'])).toEqual({ text: expect.any(String), as: 'image' })
+})
+
+test('with animate off the spinner\'s silence says nothing while its turn runs: the seat holds, and no redraw is asked, until the turn ends', { options: { gestures: false, animate: false }, plugins: [observer] }, async ($, on) => {
+  const w = world()
+
+  stubs(on, w)
+  const clock = mock.clock(on, { now: START })
+
+  await start($)
+  await turnStart($)
+  const ui = await spinner($)
+
+  await clock.settle()
+  const before = w.invalidated.length
+
+  // nothing redraws the spinner between events, and it is still on screen: the footer must not take him too
+  await clock.advance(6_000)
+  expect(w.invalidated.length).toBe(before)
+  expect(await spritePiece($, ['focus'])).toBeUndefined()
+  await ui.unmount()
+
+  await turnEnd($)
+  expect(await spritePiece($, ['focus'])).toEqual({ text: expect.any(String), as: 'image' })
+})
+
+test('a call\'s end is recorded after its start even when the clock answers the end first', { options: { gestures: false }, plugins: [observer] }, async ($, on) => {
+  const w = world()
+
+  stubs(on, w)
+  const held: Array<(answer: { value: number }) => void> = []
+  let isHeld = false
+
+  on('clock.now', () => (isHeld ? new Promise<{ value: number }>(resolve => held.push(resolve)) : { value: START + 50 }))
+  on('clock.every', () => ({ deny: 'no timers' }))
+  on('clock.after', () => ({ deny: 'no timers' }))
+  await start($)
+  await turnStart($)
+  isHeld = true
+  const id = await call($, w, READ)
+
+  await done($, id, 'Read', READ)
+  isHeld = false
+  expect(held.length).toBe(2)
+  // the end's time comes back before the start's
+  held[1]?.({ value: START + 20 })
+  held[0]?.({ value: START + 10 })
+  await $.classic.Stop({ stop_hook_active: false } as never)
+  expect(doings(w).map(doing => doing.activity)).toEqual(['thinking', 'reading', 'thinking'])
+})
+
+test('a turn start whose time comes back after the session ended for good records, seats and schedules nothing', { options: { gestures: false }, plugins: [observer] }, async ($, on) => {
+  const w = world()
+
+  stubs(on, w)
+  const held: Array<(answer: { value: number }) => void> = []
+  let isHeld = false
+
+  on('clock.now', () => (isHeld ? new Promise<{ value: number }>(resolve => held.push(resolve)) : { value: START }))
+  // refused, and counted by the observer all the same
+  on('clock.every', () => ({ deny: 'no timers' }))
+  on('clock.after', () => ({ deny: 'no timers' }))
+  await start($)
+  isHeld = true
+  await turnStart($)
+  await $.session.end({ reason: 'other', sessionId: 's1', resume: { id: 's1' } })
+  isHeld = false
+
+  const before = { after: waits(w, 'after'), every: waits(w, 'every'), doings: doings(w).length, invalidated: w.invalidated.length }
+
+  for (const answer of held.splice(0)) {
+    answer({ value: START + 10 })
+  }
+
+  await $.classic.Stop({ stop_hook_active: false } as never)
+  expect({ after: waits(w, 'after'), every: waits(w, 'every'), doings: doings(w).length, invalidated: w.invalidated.length }).toEqual(before)
+})
+
+// QUEUE_MAX in hooks/register.tsx is 256.
+test('a clock read the host never answers holds up the work behind it only so far: with 256 pieces waiting, what follows starts over', { options: { gestures: false }, plugins: [observer], timeoutMs: 30_000 }, async ($, on) => {
+  const w = world()
+
+  stubs(on, w)
+  let isSilent = false
+
+  on('clock.now', () => (isSilent ? new Promise<never>(() => undefined) : { value: START + 1 }))
+  on('clock.every', () => ({ deny: 'no timers' }))
+  on('clock.after', () => ({ deny: 'no timers' }))
+  await start($)
+
+  const before = doings(w).length
+
+  isSilent = true
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: [] } as never)
+  isSilent = false
+  await turnStart($)
+  // behind the read that never came back: nothing is recorded
+  expect(doings(w).slice(before)).toEqual([])
+
+  for (let i = 0; i < 254; i += 1) {
+    await $.classic.PostToolUse({ tool_name: 'Read', tool_input: READ, tool_response: 'ok', tool_use_id: `lost-${i}` })
+  }
+
+  expect(doings(w).slice(before)).toEqual([])
+  await turnStart($, 't2')
+  await call($, w, READ)
+  expect(doings(w).slice(before).map(doing => doing.activity)).toEqual(['thinking', 'reading'])
+  expect(w.debug.some(text => text.includes('begun again past them'))).toBe(true)
+})
+
