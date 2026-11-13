@@ -250,8 +250,9 @@ const sentinel = {
 
       return result
     })
-    // the band above the prompt, where /coworker demo draws its tour
-    on2('ui.render', { component: 'AbovePrompt' }, async ($2, e, next) => {
+    // the band above the prompt, where /coworker demo draws its tour: a band row is its plugin's
+    // own, so the witness names the row it watches
+    on2('ui.render', { component: 'AbovePrompt', plugin: 'mize-coworker' }, async ($2, e, next) => {
       const result = await next(e)
 
       for (const entry of next.trace) {
@@ -319,7 +320,7 @@ function stubs(on: On, isUiBroken = false): World {
   on('classic.SessionStart', () => ({}))
   on('classic.Stop', () => ({}))
   on('classic.SubagentStop', () => ({}))
-  // what the mods beneath draw in the band
+  // another row of the band, the test's own
   on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'Text', props: {}, children: ['beneath'] }))
 
   return w
@@ -416,6 +417,8 @@ test('a clock that never answers: every hook but /coworker still returns, and th
   const footer = await $.ui.mount({ plugin: 'mize-coworker', surface: 'terminal', component: 'SessionMode', requestId: 'session-mode', props: { modes: ['focus'] } } as never)
 
   expect(await footer.find({ type: 'Image' })).toBeDefined()
+  // by design: the footer draws the engine's labels itself, from e.props.modes
+  expect(await footer.keepsBeneath()).toBe(false)
   await footer.unmount()
 
   await $.classic.Stop({ stop_hook_active: false, background_tasks: [] } as never)

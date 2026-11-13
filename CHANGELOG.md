@@ -4,6 +4,13 @@ The coworker's history, carried over from the private tree it was built in (the 
 history lives with its tests; its look changed on 2026-10-02 with the chips, the gradient gauge, the
 vitals file and the reserve default).
 
+## mize-coworker 0.6.2 (2026-11-13)
+
+Since Claude Code 2.1.323 the band above the prompt is one row per plugin: an `AbovePrompt` hook answers its own plugin's row, and the engine stacks the rows. He drew the same on screen before and after (checked in a pseudo-terminal on 2.1.325), but three tests still described one chain shared by every mod, and failed.
+
+- Hooks: `/coworker demo`'s band hook returns the tour's row alone. It used to wrap the row and `await next(e)` in a column to keep the rows of the mods beneath; `next(e)` there is now the engine's empty node, and no other mod's row passes through this hook.
+- Tests: 196, as before. The crash-safety witness names the row it watches (`plugin: 'mize-coworker'`): a matcher without `plugin` hears only its own plugin's row, so the witness saw no `ui.render` link at all. The clock-that-never-answers test states that the footer draws the engine's labels itself (`keepsBeneath()` is false there, by design), which ends the advice line `claude plugin test` printed for it.
+
 ## The status line, and the agent panel rows (2026-11-11)
 
 - New: `statusline/subagent-statusline.sh`, Claude Code's `subagentStatusLine` command. The rows of the agent panel under the prompt as one aligned table: model class, name, what the agent is doing or how it ended, a trace of its token growth, age, tokens. Nothing shifts between refreshes; the trace gives way to the labels as the panel narrows. 224 checks.

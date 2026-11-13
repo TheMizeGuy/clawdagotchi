@@ -4,7 +4,7 @@ Claude as a small animated coworker on the status row, and a spinner word that s
 
 | | |
 | :- | :- |
-| Status | built (2026-10-02): plugins/mize-coworker 0.6.0 (0.1.0 to 0.5.4 on 2026-10-02, 0.6.0 on 2026-10-03, 0.6.1 on 2026-11-11) |
+| Status | built (2026-10-02): plugins/mize-coworker 0.6.0 (0.1.0 to 0.5.4 on 2026-10-02, 0.6.0 on 2026-10-03, 0.6.1 on 2026-11-11, 0.6.2 on 2026-11-13) |
 | Category | display only: nothing reaches the model |
 | Origin | while the status line was being rewritten the owner asked Claude "maybe add yourself, animate yourself working like my coworker in the terminal" and then "Make it you". 0.2.0: "make your claud guy higher res and orange", "have the claud guy move around the status area more and even go up next to the thinking spinner above the composer", "I mean its you so I want it to feel like your working with me". 0.3.0: "Can you make the claude guy bigger". 0.4.0: "do a very nice really quality giga high quality visual pass and upgrade to the entire status bar and claud and his anmations get creative". 0.5.0: "ensure claud has animations for all his different spinner words like working thinking etc all of them and REALLY make this look SUPER polished". 0.6.0: "fix the claud guy where he gets stuck just jumping repeatedly in the bottom right corner and then alo add some fun creative stuff when the main session is idle and agents are working or workflows etc" |
 

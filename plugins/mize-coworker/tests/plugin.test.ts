@@ -157,7 +157,7 @@ function stubs(on: On, w: World): void {
   on('classic.SessionStart', () => ({}))
   on('classic.Stop', () => ({}))
   on('classic.SubagentStop', () => ({}))
-  // the engine's own drawings: its labels, and its spinner line; and what the mods beneath draw in the band
+  // the engine's own drawings: its labels, and its spinner line; and another row of the band, the test's own
   on('ui.render', { component: 'SessionMode' }, ($, e) => ({ type: 'Text', props: { dimColor: true }, children: [e.props.modes.join(' & ')] }))
   on('ui.render', { component: 'Spinner' }, ($, e) => ({ type: 'Text', props: {}, children: [`${e.props.message ?? e.props.word}${e.props.suffix}`] }))
   on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'Text', props: {}, children: ['beneath'] }))
@@ -2663,7 +2663,7 @@ test('/coworker demo plays the whole tour in the band above the prompt, each ste
   expect(w.logs.at(-1)).toBe('/coworker demo plays every animation once, about two minutes, in the band above the prompt')
 })
 
-test('the band: the scene 12 by 2 in a seat a scene wide, then the spinner word and the frame, dim; solo frames 8 by 2 in the same seat; over what the mods beneath draw', { options: { gestures: false } }, async ($, on) => {
+test('the band: the scene 12 by 2 in a seat a scene wide, then the spinner word and the frame, dim; solo frames 8 by 2 in the same seat; his row alone, the other rows of the band stacked by the engine', { options: { gestures: false } }, async ($, on) => {
   const w = world()
 
   stubs(on, w)
@@ -2671,7 +2671,7 @@ test('the band: the scene 12 by 2 in a seat a scene wide, then the spinner word 
 
   await start($)
 
-  // no tour: what the mods beneath draw, untouched
+  // no tour: no row of his, only the band's other row
   expect(await bandOf($)).toMatchObject({ picture: undefined, texts: ['beneath'] })
 
   await run($, 'demo')
@@ -2712,7 +2712,7 @@ test('the band: the scene 12 by 2 in a seat a scene wide, then the spinner word 
   // frame kept the scene's placement and drew two cells right, cut at its box's edge
   expect(wave.picture?.key).toBe('demo-8')
 
-  // another surface, or a survey holding the band: only what lies beneath
+  // another surface, or a survey holding the band: no row of his
   expect(await bandOf($, {}, 'desktop')).toMatchObject({ picture: undefined, texts: ['beneath'] })
   expect(await bandOf($, { hasSurvey: true })).toMatchObject({ picture: undefined, texts: ['beneath'] })
 })

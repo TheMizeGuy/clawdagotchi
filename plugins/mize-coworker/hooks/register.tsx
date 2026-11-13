@@ -2044,8 +2044,9 @@ export const register: Register = (on, options) => {
   })
 
   // `/coworker demo`: the tour's step in the band above the prompt, the picture as the spinner or
-  // the footer would draw it and, right of it, what it is and the frame's name; over whatever the
-  // mods beneath draw there. Nothing while no tour runs, on another surface, or under a survey.
+  // the footer would draw it and, right of it, what it is and the frame's name. The row is this
+  // mod's own: the engine stacks every mod's row (2.1.323). Nothing while no tour runs, on another
+  // surface, or under a survey.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (!S.isInteractive || e.surface !== 'terminal' || e.props.hasSurvey) {
       return next(e)
@@ -2113,26 +2114,6 @@ export const register: Register = (on, options) => {
       row = undefined
     }
 
-    if (row === undefined) {
-      return next(e)
-    }
-
-    // keep the bands of the mods beneath this one (mize-ops-health, mize-ci-watch, mize-railway-meter)
-    const below = await next(e)
-
-    try {
-      const { Box } = $.ui.resolve(e)
-
-      return (
-        <Box flexDirection="column">
-          {row}
-          {below}
-        </Box>
-      )
-    } catch (error) {
-      debug($, `demo not drawn: ${messageOf(error)}`)
-
-      return below
-    }
+    return row ?? next(e)
   })
 }
