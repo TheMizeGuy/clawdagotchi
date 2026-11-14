@@ -4,6 +4,10 @@ The coworker's history, carried over from the private tree it was built in (the 
 history lives with its tests; its look changed on 2026-10-02 with the chips, the gradient gauge, the
 vitals file and the reserve default).
 
+## The agent panel rows are gone (2026-11-14)
+
+Claude Code 2.1.323 removed the `subagentStatusLine` setting: subagent rows always use the engine's own look, and a settings file that still holds the key loads without a warning while its command never runs. `statusline/subagent-statusline.sh`, its 224-check suite and the gallery's `agents` section had nothing left to draw, so they are removed; you can delete the key and `~/.claude/subagent-statusline.sh` from your own setup. The status line and the coworker are unchanged.
+
 ## mize-coworker 0.6.2 (2026-11-13)
 
 Since Claude Code 2.1.323 the band above the prompt is one row per plugin: an `AbovePrompt` hook answers its own plugin's row, and the engine stacks the rows. He drew the same on screen before and after (checked in a pseudo-terminal on 2.1.325), but three tests still described one chain shared by every mod, and failed.

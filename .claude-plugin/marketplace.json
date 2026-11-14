@@ -1,7 +1,7 @@
 {
   "name": "clawdagotchi",
   "metadata": {
-    "description": "A pixel-art Claude who works beside your Claude Code session: he reads, searches, types, runs, thinks and writes along with the spinner, wanders the status row while idle, minds your background agents with a skit every few seconds, and sleeps when you do. Plus the chip status line he lives on, and aligned rows for the agent panel.",
+    "description": "A pixel-art Claude who works beside your Claude Code session: he reads, searches, types, runs, thinks and writes along with the spinner, wanders the status row while idle, minds your background agents with a skit every few seconds, and sleeps when you do. Plus the chip status line he lives on.",
     "version": "0.6.2"
   },
   "owner": {

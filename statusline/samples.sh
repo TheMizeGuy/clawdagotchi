@@ -2,13 +2,13 @@
 # Gallery of the status line's looks, to judge them in a real Ghostty window: style chips at 95
 # columns with mize-coworker's 10-cell reserve, the same samples at 150 columns (where the
 # reserve is 22), style flat at 95, the context chip alone from 1% to 100% (every gradient
-# tier), the row on a machine that rotates over accounts (a fleet file), and the agent panel
-# rows of subagent-statusline.sh at 119 and 80 columns. Each line is indented two cells; the dots after it are the cells Claude (the mascot)
+# tier), and the row on a machine that rotates over accounts (a fleet file). Each line is
+# indented two cells; the dots after it are the cells Claude (the mascot)
 # holds at the row's right end, which the line must not reach.
 # Needs only the status line script, bash and jq. State lives in a temp dir removed on exit; git
 # is never run (each sample's git answer is seeded in the script's per-session cache).
 #   bash samples.sh [path/to/statusline.sh]     (default: statusline.sh beside this file)
-# SAMPLES picks sections (default all): chips95 chips150 flat95 gauges fleet agents
+# SAMPLES picks sections (default all): chips95 chips150 flat95 gauges fleet
 export LC_ALL=en_US.UTF-8
 here="${BASH_SOURCE[0]%/*}"; [ "$here" = "${BASH_SOURCE[0]}" ] && here=.
 SCRIPT="${1:-$here/statusline.sh}"
@@ -123,29 +123,10 @@ the machine just switched: this tab asked before it|$(( NOW - 300 ))|acct1\\tok\
 the bucket at its cap, one account left|$(( NOW - 86400 ))|acct1\\tok\\t-\\t-\\t91\\t$r1\\t98\\t$NOW\\nacct2\\tok\\t-\\t-\\t98\\t$(( NOW + 21600 ))\\t84\\t$NOW\\nacct3\\tok\\t-\\t-\\t99\\t$(( NOW + 300000 ))\\t30\\t$NOW\\nacct4\\tok\\t-\\t-\\t50\\t$(( NOW + 200000 ))\\t20\\t$NOW\\n|.rate_limits.seven_day.used_percentage=91
 EOF
 }
-# agents: the agent panel rows (subagent-statusline.sh beside the status line script), as the
-# engine would show them under the prompt: its own mark, then the row's body.
-agents() {
-  local sub="${SCRIPT%/*}/subagent-statusline.sh" c l
-  [ "${SCRIPT%/*}" = "$SCRIPT" ] && sub="./subagent-statusline.sh"
-  [ -r "$sub" ] || return 0
-  local tasks='[
-   {"id":"1","status":"completed","description":"fix: double-click commits on guided try press","model":"claude-opus-4-1","tokenCount":496000},
-   {"id":"2","status":"running","description":"design: the cache-switch rule","label":"Reading statusline.sh","startTime":1999999640000,"model":"claude-fable-5","tokenCount":410000,"tokenSamples":[300000,300000,301000,340000,340000,340000,352000,352000,360000,360000,360000,395000,395000,401000,401000,410000]},
-   {"id":"3","status":"running","description":"find: every caller of the usage cache writer","label":"Running rg over the hooks tree","startTime":1999999880000,"model":"claude-opus-4-1","tokenCount":88200,"tokenSamples":[0,46000,46000,52000,61000,61000,88200]},
-   {"id":"4","status":"failed","description":"map the bus contract","model":"claude-opus-4-1","tokenCount":18000},
-   {"id":"5","status":"running","description":"verify: ladder widths under bash 3.2","startTime":1999999990000,"model":"claude-opus-4-1","tokenCount":0,"tokenSamples":[0]}]'
-  for c in 119 80; do
-    printf '%sthe agent panel rows, %s columns%s\n\n' "$head" "$c" "$z"
-    printf '%s' "$tasks" | jq -c "{columns: $(( c - 6 )), cwd: \"/w\", tasks: .}" | STATUSLINE_NOW="$NOW" bash "$sub" | jq -r '.content' \
-      | while IFS= read -r l; do printf '  %s◯%s %s%s\n' "$dim" "$z" "$l" "$z"; done
-    printf '\n'
-  done
-}
 printf '\n%sThe dots are the cells mize-coworker'"'"'s Claude holds; the line must end before them.%s\n\n' "$dim" "$z"
-for part in ${SAMPLES:-chips95 chips150 flat95 gauges fleet agents}; do
+for part in ${SAMPLES:-chips95 chips150 flat95 gauges fleet}; do
   case "$part" in
     chips95) gallery chips 95 ;; chips150) gallery chips 150 ;; flat95) gallery flat 95 ;;
-    gauges) gauges ;; fleet) fleet ;; agents) agents ;;
+    gauges) gauges ;; fleet) fleet ;;
   esac
 done

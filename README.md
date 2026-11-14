@@ -6,7 +6,7 @@ A tiny pixel-art Claude who keeps you company in Claude Code, and the status lin
 
 clawdagotchi is a Claude Code plugin, `mize-coworker`, that draws the Claude Code mascot in your terminal as a small orange coworker, 8 cells wide and 2 rows tall, in 132 frames of cel-shaded pixel art. He lives at the right end of the status line. While a turn runs he moves up beside the spinner and acts out what the session is doing. Between turns he breathes, blinks, wanders a few cells and, if you leave him long enough, naps. While agents or a workflow run in the background he minds them, with a short skit every few seconds. He keeps an eye on the session too: he sweats when the context window fills up, and once the prompt cache goes cold he sleeps under a layer of frost.
 
-The repo also has the status line he sits on: one row of rounded chips with a gradient context gauge, the prompt cache, your usage windows and their pace, and the git branch; and a script that draws the subagent rows under the prompt as one aligned table. It holds his cells free at the right end of the row.
+The repo also has the status line he sits on: one row of rounded chips with a gradient context gauge, the prompt cache, your usage windows and their pace, and the git branch. It holds his cells free at the right end of the row.
 
 The plugin only draws. Nothing it does reaches the model, and it never changes a tool call.
 
@@ -122,13 +122,9 @@ The line does two jobs for Claude. From a session's very first render it keeps h
 
 If something on your machine rotates Claude Code over several accounts, one account's windows are half the picture, and the numbers Claude Code hands a status line are those of a session's last response: after a switch an idle tab still shows the account the machine left, and a prompt cache that is in fact cold on the new one. The line can follow the machine instead. Write a small helper (`~/.claude/statusline-fleet.sh`, or point `STATUSLINE_FLEET_CMD` at it) that prints your accounts in the format the script's header documents under "the account fleet"; the line runs it in the background at most every two minutes and then shows the account's name, its week, a model bucket if you report one, and how many other accounts still have room. A tab the switch left behind shows the new account's numbers and `cache cold`. Without a helper none of this exists and the row is the one above.
 
-## The agent panel rows
+![The status line with a fleet of accounts: a calm row with the account, its week, the model bucket and four accounts left; a tab the machine just switched under, with a cold cache; and the bucket at its cap with one account left, on a peach ground.](docs/media/fleet.png)
 
-`statusline/subagent-statusline.sh` is a second, independent script: Claude Code's `subagentStatusLine` command, which draws the row of each subagent in the panel under the prompt. It lays them out as one aligned table in the same palette:
-
-![The status line with a fleet of accounts (calm, just switched with a cold cache, one account left on a peach ground), then the agent panel rows at 119 and 80 columns: class, name, what the agent is doing or how it ended, a small trace of its token growth, age and tokens, in aligned columns.](docs/media/agents.png)
-
-*`SAMPLES="fleet agents" bash statusline/samples.sh` in Ghostty.*
+*`SAMPLES=fleet bash statusline/samples.sh` in Ghostty.*
 
 - the model class the agent runs on (`fable` in the status line's mauve, the rest quiet)
 - its name, one column as wide as the longest
@@ -176,22 +172,6 @@ Then point Claude Code at it in `~/.claude/settings.json` (this replaces any sta
     "command": "~/.claude/statusline.sh",
     "padding": 0,
     "refreshInterval": 10
-  }
-}
-```
-
-The agent panel rows are optional and separate (checked on Claude Code 2.1.322):
-
-```sh
-cp clawdagotchi/statusline/subagent-statusline.sh ~/.claude/subagent-statusline.sh
-chmod +x ~/.claude/subagent-statusline.sh
-```
-
-```json
-{
-  "subagentStatusLine": {
-    "type": "command",
-    "command": "~/.claude/subagent-statusline.sh"
   }
 }
 ```
@@ -263,7 +243,7 @@ The status line deletes bus files that have gone three days untouched.
 
 ## Development
 
-`scripts/check-all.sh` runs everything: the vendored-copy check, the four status line suites, and for the plugin `claude plugin validate --strict`, a check that no `tool.call` hook can match Bash, the frame contract, and `claude plugin test`. It runs `claude` from `~/.local/bin/claude`; set `CLAUDE_BIN` to use another.
+`scripts/check-all.sh` runs everything: the vendored-copy check, the three status line suites, and for the plugin `claude plugin validate --strict`, a check that no `tool.call` hook can match Bash, the frame contract, and `claude plugin test`. It runs `claude` from `~/.local/bin/claude`; set `CLAUDE_BIN` to use another.
 
 The pieces on their own:
 
@@ -274,8 +254,7 @@ The pieces on their own:
 | `bash statusline/tests/test-statusline.sh` | runs the status line's 730 rendering checks, under the first `bash` on your PATH and under `/bin/bash` |
 | `bash statusline/tests/test-statusline-usage-cache.sh` | runs the 64 checks of the shared usage cache |
 | `bash statusline/tests/test-statusline-fleet.sh` | runs the 430 checks of the row on a machine with several accounts |
-| `bash statusline/tests/test-subagent-statusline.sh` | runs the 224 checks of the agent panel rows |
-| `bash statusline/samples.sh` | prints a gallery of the status line's looks and the agent panel rows (`SAMPLES` picks sections) |
+| `bash statusline/samples.sh` | prints a gallery of the status line's looks (`SAMPLES` picks sections) |
 | `python3 plugins/mize-coworker/scripts/make-frames.py --sheet <dir>` | redraws the frames and writes contact sheets to `<dir>` (needs Pillow) |
 | `scripts/vendor-shared.sh` | copies `shared/statusline-bus.ts` into the plugin; with `--check`, fails on drift |
 | `scripts/tui-capture.py` | drives a real session in a pseudo-terminal and saves its screen as text and PNG |
@@ -286,8 +265,7 @@ Edit `shared/statusline-bus.ts`, never its vendored copy. `tui-capture.py` sees 
 
 - A terminal without the kitty graphics protocol (Terminal.app, VS Code's terminal) shows each frame's braille `alt`, dim, in one of twelve poses, so the props do not show. Set `picture` to false there for orange braille.
 - The two-row picture spans the permission-mode row under the status line, which Claude Code 2.1.288 leaves empty at its right end. If a later version fills that space, set `big` to false.
-- The status line and the agent panel rows are tuned for Catppuccin Mocha on a dark background.
-- The agent panel rows cover the subagents Claude Code lists there; it draws its own rows for dynamic workflows, below them, and no setting moves those.
+- The status line is tuned for Catppuccin Mocha on a dark background.
 - Nothing is drawn under `claude -p` or the SDK.
 
 ## Credits and license

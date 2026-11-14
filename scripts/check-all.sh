@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate and test the plugin, the frame contract, the status line and the agent panel rows, and check the vendored helper for drift.
+# Validate and test the plugin, the frame contract and the status line, and check the vendored helper for drift.
 # Usage: scripts/check-all.sh [plugin-name ...]
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -13,10 +13,10 @@ if [ "$#" -gt 0 ]; then
 else
   plugins=()
   for d in "$ROOT"/plugins/*/; do plugins+=("$(basename "$d")"); done
-  # the status line, the agent panel rows and their four suites (bash 3.2 and 5 where both exist)
+  # the status line and its three suites (bash 3.2 and 5 where both exist)
   echo "== statusline"
-  for t in test-statusline.sh test-statusline-usage-cache.sh test-statusline-fleet.sh test-subagent-statusline.sh; do
-    if ! out=$(STATUSLINE_SCRIPT="$ROOT/statusline/statusline.sh" SUBAGENT_STATUSLINE_SCRIPT="$ROOT/statusline/subagent-statusline.sh" bash "$ROOT/statusline/tests/$t" 2>&1); then
+  for t in test-statusline.sh test-statusline-usage-cache.sh test-statusline-fleet.sh; do
+    if ! out=$(STATUSLINE_SCRIPT="$ROOT/statusline/statusline.sh" bash "$ROOT/statusline/tests/$t" 2>&1); then
       echo "$out" | tail -15
       echo "FAIL $t"
       rc=1
